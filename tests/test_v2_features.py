@@ -24,6 +24,12 @@ class NewsMonitorTests(unittest.TestCase):
         self.assertEqual(start, datetime(2026, 9, 20, 16, 0))
         self.assertEqual(end, datetime(2026, 9, 20, 16, 10))
 
+    def test_parses_official_midnight_written_as_24(self):
+        text = "将于09月22日16:00 ~ 24:00期间进行维护。"
+        start, end = news_monitor.parse_maintenance_window(text, datetime(2026, 9, 22, 12).timestamp())
+        self.assertEqual(start, datetime(2026, 9, 22, 16, 0))
+        self.assertEqual(end, datetime(2026, 9, 23, 0, 0))
+
     def test_due_slot_is_stable_between_runs(self):
         now = datetime(2026, 9, 20, 21, 43)
         self.assertEqual(news_monitor.current_due_slot(now, ["00:05", "12:05"]), "2026-09-20T12:05")

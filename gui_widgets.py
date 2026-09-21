@@ -221,7 +221,6 @@ class ScrollableFrame(ttk.Frame):
 
         self._layout_suspended = 0
         self._wheel_bound = False
-        self._previous_wheel_script = ""
         self.body.bind("<Configure>", self._on_body_configure)
         self.canvas.bind("<Configure>", self._on_canvas_configure)
         self.bind("<Destroy>", self._on_destroy)
@@ -312,8 +311,19 @@ class ScrollableFrame(ttk.Frame):
         if not IS_WINDOWS or self._wheel_bound:
             return
         try:
-            self._previous_wheel_script = str(self.tk.call("bind", "all", "<MouseWheel>"))
-            self.bind_all("<MouseWheel>", self._on_mousewheel, add="+")
+            root = self.winfo_toplevel()
+            if not getattr(root, "_scrollable_wheel_dispatcher_installed", False):
+                def dispatch(event, owner_root=root):
+                    owner = getattr(owner_root, "_scrollable_wheel_owner", None)
+                    if owner is not None:
+                        return owner._on_mousewheel(event)
+                    return None
+                root.bind_all("<MouseWheel>", dispatch, add="+")
+                root._scrollable_wheel_dispatcher_installed = True
+            previous = getattr(root, "_scrollable_wheel_owner", None)
+            if previous is not None and previous is not self:
+                previous._wheel_bound = False
+            root._scrollable_wheel_owner = self
         except tk.TclError:
             return
         self._wheel_bound = True
@@ -322,7 +332,9 @@ class ScrollableFrame(ttk.Frame):
         if not self._wheel_bound:
             return
         try:
-            self.tk.call("bind", "all", "<MouseWheel>", self._previous_wheel_script)
+            root = self.winfo_toplevel()
+            if getattr(root, "_scrollable_wheel_owner", None) is self:
+                root._scrollable_wheel_owner = None
         except tk.TclError:
             pass
         self._wheel_bound = False

@@ -284,6 +284,18 @@ class ScrollableFrameTests(TkWidgetTestCase):
         self.settle()
         self.assertEqual(calls, ["app"])
 
+    def test_one_scrollable_cannot_unbind_another(self):
+        first = self.make_scrollable()
+        second = self.make_scrollable()
+        self.fill_body(first)
+        self.fill_body(second)
+        first._bind_wheel()
+        second._bind_wheel()
+        first._unbind_wheel()
+        self.assertFalse(first.wheel_bound)
+        self.assertTrue(second.wheel_bound)
+        self.assertIs(getattr(self.root, "_scrollable_wheel_owner", None), second)
+
     def test_wheel_is_never_hooked_off_windows(self):
         with patch.object(gui_widgets, "IS_WINDOWS", False):
             frame = self.make_scrollable()

@@ -811,9 +811,19 @@ def _observed_occurrence_text(item):
 def is_observed_occurrence(label, scheduled_dt, data=None):
     data = data or load_daily_stats()
     target = scheduled_dt.strftime("%Y-%m-%d %H:%M")
-    for item in data.get("observed_runs", {}).get(label, []):
-        if _observed_occurrence_text(item) == target:
-            return True
+    candidates = [data]
+    target_date = scheduled_dt.strftime("%Y-%m-%d")
+    if str(data.get("date", "")) != target_date:
+        try:
+            historical_path = STATE_DIR / f"daily_{target_date}.json"
+            if historical_path.exists():
+                candidates.append(json.loads(historical_path.read_text(encoding="utf-8")))
+        except Exception:
+            pass
+    for candidate in candidates:
+        for item in candidate.get("observed_runs", {}).get(label, []):
+            if _observed_occurrence_text(item) == target:
+                return True
     return False
 
 

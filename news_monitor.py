@@ -45,19 +45,28 @@ def _request_text(url: str, timeout: float = 15.0) -> str:
         return response.read().decode("utf-8", errors="replace")
 
 
-def fetch_announcements(timeout: float = 15.0) -> list[dict]:
+def fetch_announcements(timeout: float = 15.0, *, stop_ids=None) -> list[dict]:
     rows = []
+    known = {str(value) for value in (stop_ids or [])}
+    collected: set[str] = set()
     # The official endpoint currently returns six rows per page.  Read enough
     # pages to seed the 50-item local cache while retaining a firm request cap.
     for page in range(1, 11):
         payload = json.loads(_request_text(NEWS_API.format(page=page), timeout))
         if payload.get("code") != 0 or not isinstance(payload.get("data"), dict):
             raise RuntimeError(f"官网新闻接口返回异常：{payload.get('msg') or payload.get('code')}")
-        rows.extend(payload["data"].get("list", []))
+        for row in payload["data"].get("list", []):
+            if not isinstance(row, dict) or not row.get("cid"):
+                continue
+            cid = str(row["cid"])
+            if cid in known:
+                return rows
+            if cid not in collected:
+                collected.add(cid)
+                rows.append(row)
         if payload["data"].get("end") or len(rows) >= DEFAULT_NEWS_CACHE_LIMIT:
             break
-    unique = {str(row.get("cid")): row for row in rows if isinstance(row, dict) and row.get("cid")}
-    return list(unique.values())
+    return rows[:DEFAULT_NEWS_CACHE_LIMIT]
 
 
 def article_plain_text(cid: str, timeout: float = 15.0) -> str:
@@ -71,7 +80,35 @@ def article_plain_text(cid: str, timeout: float = 15.0) -> str:
     text = re.sub(r"<script\b[^>]*>.*?</script>", " ", text, flags=re.I | re.S)
     text = re.sub(r"<style\b[^>]*>.*?</style>", " ", text, flags=re.I | re.S)
     text = re.sub(r"<[^>]+>", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
+    return clean_article_text(text)
+
+
+def clean_article_text(text: str) -> str:
+    """Remove the official site's page chrome while retaining article prose."""
+    value = re.sub(r"\s+", " ", str(text or "")).strip()
+    for marker in (" INFO 返回列表", " 返回列表 GO BACK", " GO BACK 返回首页"):
+        position = value.find(marker)
+        if position >= 0:
+            value = value[:position].rstrip()
+    # The visible page repeats “title - 明日方舟 公告 title date” before the body.
+    value = re.sub(
+        r"^(?P<title>.+?)\s*-\s*明日方舟\s+公告\s+(?P=title)\s+"
+        r"\d{4}\s*//\s*\d{1,2}\s*/\s*\d{1,2}\s*",
+        "",
+        value,
+        count=1,
+    )
+    return value.strip()
+
+
+def article_summary(content: str, fallback: str = "", minimum: int = 80, limit: int = 320) -> str:
+    """Return a sentence-complete summary instead of the API's cut-off brief."""
+    source = clean_article_text(content) or re.sub(r"\s+", " ", str(fallback or "")).strip()
+    if len(source) <= limit:
+        return source
+    sample = source[:limit]
+    endings = [match.end() for match in re.finditer(r"[。！？；]", sample) if match.end() >= minimum]
+    return sample[:endings[-1]].strip() if endings else sample.rstrip() + "…"
 
 
 def parse_maintenance_window(text: str, display_timestamp: int | float | None = None):
@@ -80,10 +117,16 @@ def parse_maintenance_window(text: str, display_timestamp: int | float | None = 
         return None
     anchor = datetime.fromtimestamp(float(display_timestamp)) if display_timestamp else datetime.now()
     values = {key: int(value) if value is not None else None for key, value in match.groupdict().items()}
-    start = datetime(anchor.year, values["m1"], values["d1"], values["h1"], values["n1"])
+    def announcement_time(month, day, hour, minute):
+        # Chinese announcements commonly use 24:00 for midnight of the next day.
+        if hour == 24:
+            return datetime(anchor.year, month, day) + timedelta(days=1, minutes=minute)
+        return datetime(anchor.year, month, day, hour, minute)
+
+    start = announcement_time(values["m1"], values["d1"], values["h1"], values["n1"])
     end_month = values["m2"] or values["m1"]
     end_day = values["d2"] or values["d1"]
-    end = datetime(anchor.year, end_month, end_day, values["h2"], values["n2"])
+    end = announcement_time(end_month, end_day, values["h2"], values["n2"])
     if end <= start:
         end += timedelta(days=1)
     # Publication around New Year can refer to the adjacent year.
@@ -123,7 +166,11 @@ def current_due_slot(now: datetime, check_times: list[str]) -> str | None:
         for value in check_times:
             try:
                 hour, minute = [int(x) for x in str(value).split(":", 1)]
-                slot = datetime.combine(day, datetime.min.time()).replace(hour=hour, minute=minute)
+                slot = datetime.combine(day, datetime.min.time())
+                if hour == 24:
+                    slot += timedelta(days=1, minutes=minute)
+                else:
+                    slot = slot.replace(hour=hour, minute=minute)
                 if slot <= now:
                     candidates.append(slot)
             except (ValueError, TypeError):
@@ -234,12 +281,14 @@ def _make_cache_entry(row, existing=None) -> dict | None:
     for source in (previous, row):
         content = source.get("content")
         if isinstance(content, str) and content.strip():
-            entry["content"] = content.strip()
+            entry["content"] = clean_article_text(content)
         if "content" not in entry:
             continue
         fetched_at = source.get("content_fetched_at")
         if isinstance(fetched_at, str) and fetched_at.strip():
             entry["content_fetched_at"] = fetched_at.strip()
+    if entry.get("content"):
+        entry["brief"] = article_summary(entry["content"], entry.get("brief", ""))
     return entry
 
 
@@ -321,7 +370,8 @@ def _merge_cache_into_state(state: dict, cfg: dict, rows, now: datetime) -> None
 
 
 def refresh_news_cache(base_dir: Path | str, cfg: dict | None = None, progress=None, *,
-                       timeout: float | None = None, now: datetime | None = None) -> dict:
+                       timeout: float | None = None, now: datetime | None = None,
+                       full: bool = False) -> dict:
     """Force a cache refresh for the GUI news centre.
 
     Returns a structured result: status (baseline on first init, ok afterwards,
@@ -342,7 +392,8 @@ def refresh_news_cache(base_dir: Path | str, cfg: dict | None = None, progress=N
 
     _report_progress(progress, 0, 1, "开始刷新官网公告")
     try:
-        rows = fetch_announcements(seconds)
+        cached_ids = {str(item.get("cid")) for item in cached if isinstance(item, dict) and item.get("cid")}
+        rows = fetch_announcements(seconds, stop_ids=None if full or not cached_ids else cached_ids)
     except Exception as exc:
         errors.append(f"公告列表获取失败：{exc}")
         items, _new_count, _first_init = _merge_news_items(cached, [], limit=limit, initial_limit=initial_limit)
@@ -361,7 +412,11 @@ def refresh_news_cache(base_dir: Path | str, cfg: dict | None = None, progress=N
     rows = rows if isinstance(rows, list) else []
     items, new_count, first_init = _merge_news_items(cached, rows, limit=limit, initial_limit=initial_limit)
     content_limit = _cfg_positive_int(cfg.get("news_content_fetch_limit"), DEFAULT_NEWS_CONTENT_FETCH_LIMIT)
-    pending = [entry for entry in items if not entry.get("content")][:content_limit]
+    fetched_ids = {str(row.get("cid")) for row in rows if isinstance(row, dict) and row.get("cid")}
+    if full:
+        pending = items[:content_limit]
+    else:
+        pending = [entry for entry in items if entry.get("cid") in fetched_ids and not entry.get("content")][:content_limit]
     total_steps = 1 + len(pending)
     _report_progress(progress, 1, total_steps, f"官网公告列表已获取：{len(rows)} 条，新增 {new_count} 条")
 
@@ -374,7 +429,8 @@ def refresh_news_cache(base_dir: Path | str, cfg: dict | None = None, progress=N
             errors.append(f"正文抓取失败 {entry['cid']}：{exc}")
             continue
         if plain and str(plain).strip():
-            entry["content"] = re.sub(r"\s+", " ", str(plain)).strip()
+            entry["content"] = clean_article_text(plain)
+            entry["brief"] = article_summary(entry["content"], entry.get("brief", ""))
             entry["content_fetched_at"] = stamp
         else:
             errors.append(f"正文为空 {entry['cid']}")
@@ -383,7 +439,12 @@ def refresh_news_cache(base_dir: Path | str, cfg: dict | None = None, progress=N
     state["news_items"] = items
     state["news_cache_total"] = len(items)
     state["news_cache_updated_at"] = stamp
-    state["news_cache_last_result"] = f"new={new_count}, total={len(items)}, errors={len(errors)}"
+    state["news_cache_last_result"] = f"mode={'full' if full else 'incremental'}, new={new_count}, total={len(items)}, errors={len(errors)}"
+    # A manual refresh is a stock synchronisation: cached announcements are
+    # known and must never be re-sent as new notifications on the next poll.
+    known_order = [entry["cid"] for entry in items]
+    known_order.extend(str(value) for value in state.get("seen_ids", []))
+    state["seen_ids"] = list(dict.fromkeys(known_order))[:100]
     status = "baseline" if first_init else "ok"
     try:
         _save_state(state_path, state)
@@ -432,15 +493,24 @@ def poll(base_dir: Path, cfg: dict, *, force: bool = False, now: datetime | None
     if not force and (not slot or state.get("last_slot") == slot):
         return {"status": "not_due", "slot": slot, "events": []}
 
-    rows = fetch_announcements(float(cfg.get("news_timeout_seconds", 15)))
+    cached_ids = [
+        str(item.get("cid")) for item in _load_cache_items(state)
+        if isinstance(item, dict) and item.get("cid")
+    ]
+    known_order = list(dict.fromkeys([str(value) for value in state.get("seen_ids", [])] + cached_ids))
+    known = set(known_order)
+    rows = fetch_announcements(
+        float(cfg.get("news_timeout_seconds", 15)),
+        stop_ids=known or None,
+    )
     current_ids = [str(row["cid"]) for row in rows]
-    seen = {str(value) for value in state.get("seen_ids", [])}
+    seen = known
     if not state.get("initialized"):
         state.update({
             "initialized": True,
             "last_slot": slot or now.isoformat(timespec="minutes"),
             "last_checked_at": now.isoformat(timespec="seconds"),
-            "seen_ids": current_ids[:100],
+            "seen_ids": list(dict.fromkeys(current_ids + known_order))[:100],
             "last_result": "baseline",
         })
         _merge_cache_into_state(state, cfg, rows, now)
@@ -463,14 +533,14 @@ def poll(base_dir: Path, cfg: dict, *, force: bool = False, now: datetime | None
         events.append({
             "cid": cid,
             "title": str(row.get("title", "官网维护公告")),
-            "brief": re.sub(r"\s+", " ", str(row.get("brief", ""))).strip()[:360],
+            "brief": article_summary(plain, str(row.get("brief", ""))),
             "url": ARTICLE_URL.format(cid=cid),
             "start": window[0].isoformat(timespec="minutes") if window else None,
             "end": window[1].isoformat(timespec="minutes") if window else None,
             "changes": changes,
         })
 
-    merged = list(dict.fromkeys(current_ids + list(seen)))[:100]
+    merged = list(dict.fromkeys(current_ids + known_order))[:100]
     state.update({
         "initialized": True,
         "last_slot": slot or now.isoformat(timespec="minutes"),

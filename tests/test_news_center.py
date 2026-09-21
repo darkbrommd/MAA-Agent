@@ -89,8 +89,20 @@ class NewsCacheRefreshTests(unittest.TestCase):
         self.assertEqual(newest["url"], ARTICLE_PREFIX + "0030")
         self.assertTrue(newest["display_time"])
         self.assertTrue(newest["brief"])
-        # The cache never claims poll's baseline, so old announcements cannot be re-sent.
+        # Cache entries become known stock, but the scheduled poll still owns initialization.
         self.assertNotIn("initialized", state)
+        self.assertEqual(state["seen_ids"], [f"{n:04d}" for n in range(30, 10, -1)])
+
+    def test_list_fetch_stops_at_first_cached_announcement(self):
+        payload = {
+            "code": 0,
+            "data": {"list": [make_row(3), make_row(2), make_row(1)], "end": False},
+        }
+        with patch.object(news_monitor, "_request_text", return_value=json.dumps(payload)) as request:
+            rows = news_monitor.fetch_announcements(1, stop_ids={"0002"})
+
+        self.assertEqual([row["cid"] for row in rows], ["0003"])
+        request.assert_called_once()
 
     def test_cache_is_capped_at_fifty_entries(self):
         first_batch = [make_row(n) for n in range(1, 21)]
@@ -266,7 +278,9 @@ class NewsCacheCompatibilityTests(unittest.TestCase):
 
         self.assertEqual(result["total"], 3)
         for key, value in legacy.items():
-            self.assertEqual(state[key], value, key)
+            if key != "seen_ids":
+                self.assertEqual(state[key], value, key)
+        self.assertEqual(set(state["seen_ids"]), {"4922", "8578", "0001", "0002", "0003"})
         self.assertEqual(len(state["news_items"]), 3)
 
     def test_refresh_then_poll_still_alerts_only_new_maintenance_notice(self):
@@ -292,10 +306,11 @@ class NewsCacheCompatibilityTests(unittest.TestCase):
                     patch.object(news_monitor, "apply_supervision_overrides", return_value=[]) as overrides:
                 news_monitor.refresh_news_cache(Path(td), cfg)
 
-                # Building the cache must not touch the notification bookkeeping.
+                # Manual refresh makes fetched rows known stock, so the next
+                # automatic poll must not re-notify them.
                 state = read_state(td)
                 self.assertEqual(len(state["news_items"]), 3)
-                self.assertEqual(state["seen_ids"], ["8001", "8002"])
+                self.assertEqual(set(state["seen_ids"]), {"8001", "8002", "8003"})
                 self.assertEqual(state["last_slot"], "2026-09-20T12:05")
                 self.assertEqual(state["latest_events"], [])
                 self.assertEqual(state["last_result"], "new=0, relevant=0")
@@ -303,17 +318,34 @@ class NewsCacheCompatibilityTests(unittest.TestCase):
 
                 polled = news_monitor.poll(Path(td), cfg, force=True, now=datetime(2026, 9, 21, 13, 0))
                 self.assertEqual(polled["status"], "ok")
-                self.assertEqual(polled["new_count"], 1)
-                self.assertEqual([event["cid"] for event in polled["events"]], ["8003"])
+                self.assertEqual(polled["new_count"], 0)
+                self.assertEqual(polled["events"], [])
 
                 state = read_state(td)
                 self.assertEqual(len(state["news_items"]), 3)
                 self.assertIn("8003", state["seen_ids"])
-                self.assertEqual([event["cid"] for event in state["latest_events"]], ["8003"])
+                self.assertEqual(state["latest_events"], [])
 
                 again = news_monitor.poll(Path(td), cfg, force=True, now=datetime(2026, 9, 21, 13, 5))
                 self.assertEqual(again["new_count"], 0)
                 self.assertEqual(again["events"], [])
+
+    def test_poll_treats_cached_rows_as_known_even_with_legacy_seen_gap(self):
+        rows = [make_row(n, title=f"{n}月维护公告") for n in range(1, 21)]
+        legacy = {
+            "initialized": True,
+            "seen_ids": ["0020"],
+            "news_items": [news_monitor._make_cache_entry(row) for row in rows],
+        }
+        with tempfile.TemporaryDirectory() as td:
+            write_state(td, legacy)
+            with patch.object(news_monitor, "fetch_announcements", return_value=rows), \
+                    patch.object(news_monitor, "article_plain_text", side_effect=AssertionError("存量不应抓正文")):
+                result = news_monitor.poll(Path(td), {"news_timeout_seconds": 1}, force=True,
+                                           now=datetime(2026, 9, 21, 13, 0))
+
+        self.assertEqual(result["new_count"], 0)
+        self.assertEqual(result["events"], [])
 
     def test_poll_keeps_supervision_override_behaviour(self):
         window_text = "将于09月21日16:00 ~ 16:10 期间进行服务器闪断更新。"

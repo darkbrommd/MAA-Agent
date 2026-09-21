@@ -43,6 +43,8 @@ ASSET_DIR = BASE_DIR / "assets"
 ICON_PNG = ASSET_DIR / "app_icon.png"
 ICON_ICO = ASSET_DIR / "app_icon.ico"
 SHOW_REQUEST_FILE = STATE_DIR / "gui_show.request"
+GUI_STATE_FILE = STATE_DIR / "gui_state.json"
+SCHEDULE_RUN_STATE_FILE = STATE_DIR / "schedule_run_status.json"
 SECRET_NAMES = {"bark_key", "deepseek_api_key"}
 TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -174,6 +176,70 @@ def filter_log_text(text: str, mode: str) -> str:
     )
     lines = [line for line in text.splitlines() if any(key in line.lower() for key in keywords)]
     return "\n".join(lines[-300:]) if lines else "（最近没有事故、异常或恢复记录）"
+
+
+def load_gui_state() -> dict:
+    try:
+        value = json.loads(GUI_STATE_FILE.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_gui_state(value: dict) -> None:
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        temp = GUI_STATE_FILE.with_suffix(".json.tmp")
+        temp.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+        temp.replace(GUI_STATE_FILE)
+    except OSError:
+        pass
+
+
+def log_text_after(text: str, cutoff: datetime | None) -> str:
+    if cutoff is None:
+        return text
+    kept = []
+    for line in text.splitlines():
+        match = re.match(r"^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]", line)
+        if not match:
+            continue
+        try:
+            if datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S") > cutoff:
+                kept.append(line)
+        except ValueError:
+            continue
+    return "\n".join(kept)
+
+
+def schedule_occurrence_key(label: str, when: datetime) -> str:
+    return f"{label}|{when:%Y-%m-%d %H:%M}"
+
+
+def load_schedule_run_records() -> dict[str, dict]:
+    try:
+        value=json.loads(SCHEDULE_RUN_STATE_FILE.read_text(encoding="utf-8"))
+        runs=value.get("runs") if isinstance(value,dict) else None
+        return runs if isinstance(runs,dict) else {}
+    except Exception:
+        return {}
+
+
+def next_schedule_keys(rows: list[dict], now: datetime, run_records: dict[str, dict] | None = None) -> set[str]:
+    run_records=run_records or {}
+    candidates=[]
+    for row in rows:
+        when=row.get("datetime")
+        if not isinstance(when,datetime) or when<=now or row.get("skipped"):
+            continue
+        key=schedule_occurrence_key(str(row.get("label","")),when)
+        if (run_records.get(key) or {}).get("status") in {"running","completed","failed"}:
+            continue
+        candidates.append((when,key))
+    if not candidates:
+        return set()
+    earliest=min(item[0] for item in candidates)
+    return {key for when,key in candidates if when==earliest}
 
 
 class MetricBar(tk.Canvas):
@@ -430,6 +496,8 @@ class ManagerApp:
         self.root.geometry("1220x820")
         self.root.minsize(1040, 700)
         self.cfg = load_config()
+        self.gui_state = load_gui_state()
+        self._dashboard_log_cleared_at = None
         self._apply_window_icon()
         self._apply_tk_scaling()
         self.config_dirty = False
@@ -455,6 +523,7 @@ class ManagerApp:
         self.timing_vars: dict[str, tk.StringVar] = {}
         self._build_style()
         self._build_ui()
+        self.root.after(120, self._restore_dashboard_layout)
         self._apply_runtime_theme()
         self.root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
         self._setup_tray()
@@ -647,12 +716,12 @@ class ManagerApp:
                 self.memory_progress = MetricBar(frame, palette=self.palette, fill="#d84a68")
                 self.memory_progress.pack(fill="x", pady=2)
 
-        info = ttk.Panedwindow(self.dashboard, orient="horizontal")
-        info.pack(fill="both", expand=True, pady=(6, 0))
-        schedule_frame = ttk.LabelFrame(info, text="未来计划", padding=8)
-        activity_frame = ttk.LabelFrame(info, text="最近事件与内存趋势", padding=8, style="Activity.TLabelframe")
-        info.add(schedule_frame, weight=2)
-        info.add(activity_frame, weight=1)
+        self.dashboard_info_panes = ttk.Panedwindow(self.dashboard, orient="horizontal")
+        self.dashboard_info_panes.pack(fill="both", expand=True, pady=(6, 0))
+        schedule_frame = ttk.LabelFrame(self.dashboard_info_panes, text="未来计划", padding=8)
+        activity_frame = ttk.LabelFrame(self.dashboard_info_panes, text="最近事件与内存趋势", padding=8, style="Activity.TLabelframe")
+        self.dashboard_info_panes.add(schedule_frame, weight=2)
+        self.dashboard_info_panes.add(activity_frame, weight=1)
         self.next_schedule_cards = ScrollableFrame(schedule_frame, palette=self.palette)
         self.next_schedule_cards.pack(fill="both", expand=True)
         activity_bar = ttk.Frame(activity_frame, style="Activity.TFrame")
@@ -663,6 +732,7 @@ class ManagerApp:
         self.activity_expanded = True
         self.activity_toggle = ttk.Button(activity_bar, text="隐藏图表", width=9, command=self.toggle_dashboard_activity)
         self.activity_toggle.pack(side="right")
+        ttk.Button(activity_bar, text="清空日志", width=9, command=self.clear_current_logs).pack(side="right", padx=(0, 6))
         self.dashboard_log_mode.trace_add("write", lambda *_: self.refresh_dashboard())
         self.activity_panes = ttk.Panedwindow(activity_frame, orient="vertical", style="Activity.TPanedwindow")
         self.activity_panes.pack(fill="both", expand=True)
@@ -674,6 +744,8 @@ class ManagerApp:
         self.recent_log.pack(fill="both", expand=True)
         self.activity_panes.add(self.dashboard_chart_frame, weight=1)
         self.activity_panes.add(self.dashboard_log_frame, weight=2)
+        self.dashboard_info_panes.bind("<ButtonRelease-1>", self._save_dashboard_layout, add="+")
+        self.activity_panes.bind("<ButtonRelease-1>", self._save_dashboard_layout, add="+")
 
     def _build_schedule(self):
         nav = ttk.Frame(self.schedule_tab)
@@ -738,6 +810,10 @@ class ManagerApp:
         ttk.Label(toolbar, textvariable=self.news_center_status, style="Muted.TLabel").pack(side="left")
         self.news_refresh_button = ttk.Button(toolbar, text="立即更新", command=self.refresh_news_center)
         self.news_refresh_button.pack(side="right")
+        self.news_full_refresh_button = ttk.Button(
+            toolbar, text="全部重拉", command=lambda: self.refresh_news_center(full=True)
+        )
+        self.news_full_refresh_button.pack(side="right", padx=(0, 6))
         self.news_progress = ttk.Progressbar(toolbar, maximum=1, mode="determinate", length=220)
         self.news_progress.pack(side="right", padx=8)
 
@@ -953,6 +1029,32 @@ class ManagerApp:
                 pass
             self.activity_toggle.configure(text="显示图表")
 
+    def clear_current_logs(self):
+        self._dashboard_log_cleared_at = datetime.now()
+        self._set_text(self.recent_log, "（主页最近事件已清空；完整日志仍保留在“日志”页。）")
+        self._set_footer("已清空主页最近事件；实际日志未改动。")
+
+    def _restore_dashboard_layout(self):
+        positions = self.gui_state.get("dashboard_sashes", {})
+        for key, panes in (("main", self.dashboard_info_panes), ("activity", self.activity_panes)):
+            try:
+                position = int(positions.get(key, 0))
+                if position > 0 and len(panes.panes()) > 1:
+                    panes.sashpos(0, position)
+            except (TypeError, ValueError, tk.TclError):
+                pass
+
+    def _save_dashboard_layout(self, _event=None):
+        positions = dict(self.gui_state.get("dashboard_sashes", {}))
+        for key, panes in (("main", self.dashboard_info_panes), ("activity", self.activity_panes)):
+            try:
+                if len(panes.panes()) > 1:
+                    positions[key] = int(panes.sashpos(0))
+            except (TypeError, ValueError, tk.TclError):
+                pass
+        self.gui_state["dashboard_sashes"] = positions
+        save_gui_state(self.gui_state)
+
     def confirm_close(self):
         self.hide_to_tray()
 
@@ -1069,6 +1171,7 @@ class ManagerApp:
         self.refresh_all()
 
     def exit_gui(self):
+        self._save_dashboard_layout()
         if self.refresh_job:
             self.root.after_cancel(self.refresh_job)
             self.refresh_job = None
@@ -1377,6 +1480,7 @@ class ManagerApp:
         used_gb = (vm.total - vm.available) / 1024**3
         self.memory_progress.set_value(vm.percent, f"内存 {vm.percent:.0f}% · 已用 {used_gb:.1f} GB")
         recent=tail_text(LOG_DIR / "agent.log", max_lines=120, max_bytes=100_000)
+        recent=log_text_after(recent, self._dashboard_log_cleared_at)
         self._set_text(self.recent_log, filter_log_text(recent,self.dashboard_log_mode.get()))
         today = datetime.now().date()
         mini_rows = load_resource_calendar_day(BASE_DIR, today, int(self.cfg.get("operational_day_start_hour", 4)))
@@ -1727,7 +1831,13 @@ class ManagerApp:
             self.news_center_status.set(message)
         self.root.after(0, apply_update)
 
-    def refresh_news_center(self):
+    def refresh_news_center(self, full=False):
+        if full and not messagebox.askokcancel(
+            "全部重新拉取",
+            "将重新拉取公告列表和正文；耗时与请求量明显高于普通更新。继续吗？",
+            parent=self.root,
+        ):
+            return
         if not self.news_items:
             proceed = messagebox.askokcancel(
                 "首次更新官网公告",
@@ -1737,16 +1847,18 @@ class ManagerApp:
             if not proceed:
                 return
         self.news_refresh_button.configure(state="disabled")
+        self.news_full_refresh_button.configure(state="disabled")
         self.news_progress.configure(maximum=1, value=0)
 
         def worker():
-            result = refresh_news_cache(BASE_DIR, self.cfg, progress=self._news_progress_update)
+            result = refresh_news_cache(BASE_DIR, self.cfg, progress=self._news_progress_update, full=full)
             self.root.after(0, lambda: self._finish_news_refresh(result))
 
         threading.Thread(target=worker, name="news-cache-refresh", daemon=True).start()
 
     def _finish_news_refresh(self, result: dict):
         self.news_refresh_button.configure(state="normal")
+        self.news_full_refresh_button.configure(state="normal")
         self.load_news_center(result)
         errors = list(result.get("errors") or [])
         if result.get("status") == "error":
