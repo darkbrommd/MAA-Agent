@@ -510,6 +510,20 @@ class ManagerApp:
         style.configure("TLabel", background=palette["bg"], foreground=palette["fg"])
         style.configure("TButton", background=palette["field"], foreground=palette["fg"], padding=(9, 5))
         style.map("TButton", background=[("active", palette["accent"])], foreground=[("active", "#ffffff")])
+        style.configure(
+            "TCombobox",
+            fieldbackground=palette["field"],
+            background=palette["field"],
+            foreground=palette["fg"],
+            arrowcolor=palette["fg"],
+        )
+        style.map(
+            "TCombobox",
+            fieldbackground=[("readonly", palette["field"])],
+            foreground=[("readonly", palette["fg"])],
+            selectbackground=[("readonly", palette["field"])],
+            selectforeground=[("readonly", palette["fg"])],
+        )
         style.configure("TCheckbutton", background=palette["bg"], foreground=palette["fg"])
         style.configure("TRadiobutton", background=palette["bg"], foreground=palette["fg"])
         style.configure("TNotebook", background=palette["bg"], borderwidth=0)
