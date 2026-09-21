@@ -26,6 +26,7 @@
     "MAA1": "D:\\MAA\\MAA1",
     "MAA2": "D:\\MAA\\MAA2"
   },
+  "maa_instance_aliases": {"MAA1": "", "MAA2": ""},
   "maa_gui_config_paths": {
     "MAA1": "D:\\MAA\\MAA1\\config\\gui.new.json",
     "MAA2": "D:\\MAA\\MAA2\\config\\gui.new.json"

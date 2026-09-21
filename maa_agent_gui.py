@@ -9,7 +9,6 @@ configuration and logs. Normal minimize stays on the taskbar; the explicit
 from __future__ import annotations
 
 import json
-import calendar
 import locale
 import os
 import re
@@ -20,6 +19,7 @@ import threading
 import ctypes
 import base64
 import webbrowser
+import hashlib
 from datetime import date, datetime, timedelta
 from pathlib import Path
 import tkinter as tk
@@ -31,6 +31,7 @@ from agent_runtime import AgentMutex, find_running_agents, request_stop, validat
 from schedule_utils import add_override, effective_occurrences, remove_override
 from diagnostic_commands import enqueue as enqueue_diagnostic
 from news_monitor import load_news_cache, refresh_news_cache
+from gui_widgets import InlineCalendar, ScrollableFrame, ToggleSwitch
 from resource_history import load_calendar_day as load_resource_calendar_day, memory_values, operational_date
 
 
@@ -55,7 +56,7 @@ CONFIG_HELP = {
     "expected_heavy_process_names": "帮助解释资源占用。Steam 启动器单独后台运行不会被当成正在游戏。",
     "news_maintenance_action": "supervision_only：只暂停该维护窗口内的漏跑报警，不直接改写 MAA 的实时配置。",
     "maa_gui_config_paths": "只读 MAA 的定时器配置，用来展示和核对计划；管理器不会在 MAA 运行时覆盖它。",
-    "schedule_override_file": "本管理器的一次性监督例外。它改变报警预期，不会阻止 MAA 自己启动。",
+    "schedule_override_file": "本管理器的一次性监测例外。它改变报警预期，不会阻止 MAA 自己启动。",
     "quiet_startup": "开启后，Agent 正常启动时不发 Bark；事故通知不受影响。",
     "launch_paths": "GUI 一键启动及可选的随 Agent 启动路径。",
 }
@@ -82,6 +83,24 @@ def memory_text(total_mb: float, available_mb: float, percent: float) -> str:
     return f"{percent:.0f}%（已用 {used_mb / 1024:.1f} GB / 可用 {available_mb / 1024:.1f} GB，共 {total_mb / 1024:.1f} GB）"
 
 
+def _mix_color(left: str, right: str, ratio: float) -> str:
+    ratio = max(0.0, min(1.0, ratio))
+    a = tuple(int(left[index:index + 2], 16) for index in (1, 3, 5))
+    b = tuple(int(right[index:index + 2], 16) for index in (1, 3, 5))
+    value = tuple(round(a[index] + (b[index] - a[index]) * ratio) for index in range(3))
+    return "#%02x%02x%02x" % value
+
+
+def time_of_day_color(when: datetime) -> str:
+    hour = when.hour + when.minute / 60
+    stops = ((0, "#17233f"), (6, "#d96c4f"), (10, "#f1c453"),
+             (13, "#f4ead0"), (17, "#ed9a47"), (24, "#17233f"))
+    for (start, start_color), (end, end_color) in zip(stops, stops[1:]):
+        if start <= hour <= end:
+            return _mix_color(start_color, end_color, (hour - start) / (end - start))
+    return stops[-1][1]
+
+
 def enable_hidpi_awareness() -> None:
     if os.name != "nt":
         return
@@ -97,6 +116,15 @@ def enable_hidpi_awareness() -> None:
             ctypes.windll.user32.SetProcessDPIAware()
         except Exception:
             pass
+
+
+def set_windows_app_identity() -> None:
+    if os.name != "nt":
+        return
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("MAA.Agent.Manager")
+    except Exception:
+        pass
 
 
 def create_windows_shortcut(path: Path, *, startup: bool = False) -> None:
@@ -177,60 +205,6 @@ class MetricBar(tk.Canvas):
         self.create_rectangle(0, 0, width * self.value / 100, height, fill=self.fill, outline="")
         text_color = "#ffffff" if self.palette["bg"] == PALETTES["dark"]["bg"] else self.palette["fg"]
         self.create_text(width / 2, height / 2, text=self.label, fill=text_color, font=("Microsoft YaHei UI", 9, "bold"))
-
-
-class CalendarPopup(tk.Toplevel):
-    """Dependency-free month calendar used by the schedule date field."""
-
-    def __init__(self, master, selected: date, callback, palette: dict):
-        super().__init__(master)
-        self.withdraw()
-        self.transient(master)
-        self.resizable(False, False)
-        self.title("选择日期")
-        self.callback = callback
-        self.palette = palette
-        self.year, self.month = selected.year, selected.month
-        self.body = ttk.Frame(self, padding=10)
-        self.body.pack(fill="both", expand=True)
-        self.protocol("WM_DELETE_WINDOW", self.destroy)
-        self._draw()
-        self.update_idletasks()
-        x = master.winfo_rootx() + max(20, (master.winfo_width() - self.winfo_width()) // 2)
-        y = master.winfo_rooty() + 80
-        self.geometry(f"+{x}+{y}")
-        self.deiconify()
-        self.grab_set()
-        self.focus_force()
-
-    def _change_month(self, delta: int):
-        index = self.year * 12 + self.month - 1 + delta
-        self.year, zero_month = divmod(index, 12)
-        self.month = zero_month + 1
-        self._draw()
-
-    def _pick(self, day: int):
-        self.callback(date(self.year, self.month, day))
-        self.destroy()
-
-    def _draw(self):
-        for child in self.body.winfo_children():
-            child.destroy()
-        header = ttk.Frame(self.body)
-        header.grid(row=0, column=0, columnspan=7, sticky="ew", pady=(0, 7))
-        ttk.Button(header, text="‹", width=3, command=lambda: self._change_month(-1)).pack(side="left")
-        ttk.Label(header, text=f"{self.year} 年 {self.month} 月", style="Heading.TLabel").pack(side="left", expand=True)
-        ttk.Button(header, text="›", width=3, command=lambda: self._change_month(1)).pack(side="right")
-        for column, title in enumerate(("一", "二", "三", "四", "五", "六", "日")):
-            ttk.Label(self.body, text=title, anchor="center", width=4).grid(row=1, column=column, padx=1, pady=1)
-        for row_index, week in enumerate(calendar.monthcalendar(self.year, self.month), start=2):
-            for column, day in enumerate(week):
-                if day:
-                    ttk.Button(self.body, text=str(day), width=4, command=lambda value=day: self._pick(value)).grid(
-                        row=row_index, column=column, padx=1, pady=1
-                    )
-                else:
-                    ttk.Label(self.body, text="", width=4).grid(row=row_index, column=column)
 
 
 class ResourceChart(tk.Canvas):
@@ -450,6 +424,7 @@ def tail_text(path: Path, max_lines: int = 300, max_bytes: int = 300_000) -> str
 class ManagerApp:
     def __init__(self):
         enable_hidpi_awareness()
+        set_windows_app_identity()
         self.root = tk.Tk()
         self.root.title("MAA Agent 管理器")
         self.root.geometry("1220x820")
@@ -469,7 +444,7 @@ class ManagerApp:
         self._build_style()
         self._build_ui()
         self._apply_runtime_theme()
-        self.root.protocol("WM_DELETE_WINDOW", self.confirm_close)
+        self.root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
         self._setup_tray()
         self.refresh_all()
         if self.cfg.get("gui_start_agent_on_launch", True) and not validated_agent_for_dir(BASE_DIR):
@@ -664,8 +639,8 @@ class ManagerApp:
         activity_frame = ttk.LabelFrame(info, text="最近事件与内存趋势", padding=8, style="Activity.TLabelframe")
         info.add(schedule_frame, weight=2)
         info.add(activity_frame, weight=1)
-        self.next_schedule = tk.Text(schedule_frame, height=16, wrap="none", state="disabled", font=("Consolas", 10))
-        self.next_schedule.pack(fill="both", expand=True)
+        self.next_schedule_cards = ScrollableFrame(schedule_frame, palette=self.palette)
+        self.next_schedule_cards.pack(fill="both", expand=True)
         activity_bar = ttk.Frame(activity_frame, style="Activity.TFrame")
         activity_bar.pack(fill="x", pady=(0, 5))
         ttk.Label(activity_bar, text="显示").pack(side="left")
@@ -696,27 +671,21 @@ class ManagerApp:
         self.schedule_day_entry = ttk.Entry(nav, textvariable=self.schedule_day_var, width=12)
         self.schedule_day_entry.pack(side="left", padx=(18, 4))
         self.schedule_day_entry.bind("<Return>", lambda _event: self.goto_schedule_day())
-        ttk.Button(nav, text="日历", width=6, command=self.open_schedule_calendar).pack(side="left")
+        self.calendar_toggle = ttk.Button(nav, text="▼", width=3, command=self.open_schedule_calendar)
+        self.calendar_toggle.pack(side="left")
         ttk.Button(nav, text="→", width=3, command=self.goto_schedule_day).pack(side="left", padx=(4, 0))
         self.schedule_window_var = tk.StringVar()
         ttk.Label(nav, textvariable=self.schedule_window_var, style="Heading.TLabel").pack(side="right")
-        intro = "开关控制的是“本管理器是否监督这一次运行”，不会热改 MAA。04:00 是统计日边界，边界计划会特别标记。"
-        ttk.Label(self.schedule_tab, text=intro, style="Muted.TLabel").pack(anchor="w", pady=(0, 8))
-        cols = ("enabled", "instance", "effective", "source", "override")
-        self.schedule_tree = ttk.Treeview(self.schedule_tab, columns=cols, show="headings", height=18)
-        headings = {"enabled": "监督", "instance": "实例", "effective": "本次时间", "source": "来源", "override": "说明"}
-        widths = {"enabled": 90, "instance": 90, "effective": 190, "source": 170, "override": 420}
-        for col in cols:
-            self.schedule_tree.heading(col, text=headings[col])
-            self.schedule_tree.column(col, width=widths[col], anchor="w")
-        self.schedule_tree.pack(fill="both", expand=True)
-        self.schedule_tree.bind("<Double-1>", lambda _e: self.toggle_occurrence())
+        self.schedule_calendar = InlineCalendar(self.schedule_tab, self.schedule_day, self.set_schedule_day, self.palette)
+        self.calendar_visible = False
+        intro = "开关控制的是“本管理器是否监测这一次运行”，不会热改 MAA。04:00 是统计日边界，边界计划会特别标记。"
+        self.schedule_intro = ttk.Label(self.schedule_tab, text=intro, style="Muted.TLabel")
+        self.schedule_intro.pack(anchor="w", pady=(0, 8))
+        self.schedule_cards = ScrollableFrame(self.schedule_tab, palette=self.palette)
+        self.schedule_cards.pack(fill="both", expand=True)
         actions = ttk.Frame(self.schedule_tab)
         actions.pack(fill="x", pady=(10, 0))
-        ttk.Button(actions, text="切换监督开关", command=self.toggle_occurrence).pack(side="left", padx=(0, 5))
-        ttk.Button(actions, text="修改本次时间", command=self.move_occurrence).pack(side="left", padx=5)
-        ttk.Button(actions, text="撤销一次性例外", command=self.clear_override).pack(side="left", padx=5)
-        ttk.Button(actions, text="当天全部开启", command=lambda: self.toggle_all_occurrences(True)).pack(side="left", padx=(22, 5))
+        ttk.Button(actions, text="当天全部开启", command=lambda: self.toggle_all_occurrences(True)).pack(side="left", padx=(0, 5))
         ttk.Button(actions, text="当天全部关闭", command=lambda: self.toggle_all_occurrences(False)).pack(side="left", padx=5)
         ttk.Button(actions, text="刷新", command=self.refresh_schedule).pack(side="right")
 
@@ -732,13 +701,11 @@ class ManagerApp:
         ttk.Label(self.resource_tab, textvariable=self.resource_summary_var).pack(anchor="w", pady=(0, 6))
         self.resource_chart = ResourceChart(self.resource_tab, palette=self.palette, height=360, on_open=self.show_resource_detail)
         self.resource_chart.pack(fill="both", expand=True)
-        frame = ttk.LabelFrame(self.resource_tab, text="异常采样点（每条仅列前三个内存大户；双击查看完整分析）", padding=6)
+        frame = ttk.LabelFrame(self.resource_tab, text="异常采样（卡片仅列前三个内存大户；双击查看完整分析）", padding=6)
         frame.pack(fill="x", pady=(8, 0))
-        self.snapshot_tree = ttk.Treeview(frame, columns=("time","reason","processes"), show="headings", height=6)
-        for key,title,width in (("time","时间",135),("reason","当时状态",210),("processes","内存大户",720)):
-            self.snapshot_tree.heading(key,text=title); self.snapshot_tree.column(key,width=width,anchor="w")
-        self.snapshot_tree.pack(fill="x")
-        self.snapshot_tree.bind("<Double-1>", self.open_selected_snapshot)
+        self.snapshot_cards = ScrollableFrame(frame, palette=self.palette)
+        self.snapshot_cards.canvas.configure(height=150)
+        self.snapshot_cards.pack(fill="x")
 
     def _build_news(self):
         toolbar = ttk.Frame(self.news_tab)
@@ -788,17 +755,25 @@ class ManagerApp:
         ttk.Label(behavior,text="关闭后仍记录资源历史，但不会发送内存压力通知。",style="Muted.TLabel").grid(row=2,column=1,sticky="w",pady=4)
         ttk.Label(behavior,text="任务栏固定由 Windows 管理：桌面和开始菜单快捷方式已创建，可右键它选择“固定到任务栏”。",style="Muted.TLabel").grid(row=3,column=0,columnspan=2,sticky="w",pady=(8,0))
 
-        apps = ttk.LabelFrame(self.settings_tab, text="程序路径与随 Agent 启动", padding=12)
+        apps = ttk.LabelFrame(self.settings_tab, text="实例别名、程序路径与随 Agent 启动", padding=12)
         apps.pack(fill="x", pady=(12,0))
-        self.launch_path_vars={}; self.autostart_vars={}
-        for row,label in enumerate(("MAA1","MAA2","MuMu")):
+        self.launch_path_vars={}; self.autostart_vars={}; self.instance_alias_vars={}
+        ttk.Label(apps,text="实例",style="Muted.TLabel").grid(row=0,column=0,sticky="w")
+        ttk.Label(apps,text="显示别名",style="Muted.TLabel").grid(row=0,column=1,sticky="w")
+        ttk.Label(apps,text="可执行文件路径",style="Muted.TLabel").grid(row=0,column=2,sticky="w",padx=5)
+        for row,label in enumerate(("MAA1","MAA2","MuMu"), start=1):
             path_var=tk.StringVar(); auto_var=tk.BooleanVar(); self.launch_path_vars[label]=path_var; self.autostart_vars[label]=auto_var
             ttk.Label(apps,text=label,width=8).grid(row=row,column=0,sticky="w",pady=5)
-            ttk.Entry(apps,textvariable=path_var,width=82).grid(row=row,column=1,sticky="ew",padx=5)
-            ttk.Button(apps,text="浏览…",command=lambda x=label:self.choose_launch_path(x)).grid(row=row,column=2,padx=4)
-            ttk.Button(apps,text="立即启动",command=lambda x=label:self.launch_configured(x)).grid(row=row,column=3,padx=4)
-            ttk.Checkbutton(apps,text="随 Agent 启动（未运行时）",variable=auto_var).grid(row=row,column=4,sticky="w",padx=(10,0))
-        apps.columnconfigure(1,weight=1)
+            if label.startswith("MAA"):
+                alias_var=tk.StringVar(); self.instance_alias_vars[label]=alias_var
+                ttk.Entry(apps,textvariable=alias_var,width=13).grid(row=row,column=1,sticky="w",padx=(0,5))
+            else:
+                ttk.Label(apps,text="—",style="Muted.TLabel",width=13).grid(row=row,column=1,sticky="w",padx=(0,5))
+            ttk.Entry(apps,textvariable=path_var,width=58).grid(row=row,column=2,sticky="ew",padx=5)
+            ttk.Button(apps,text="浏览…",command=lambda x=label:self.choose_launch_path(x)).grid(row=row,column=3,padx=4)
+            ttk.Button(apps,text="立即启动",command=lambda x=label:self.launch_configured(x)).grid(row=row,column=4,padx=4)
+            ttk.Checkbutton(apps,text="随 Agent 启动",variable=auto_var).grid(row=row,column=5,sticky="w",padx=(10,0))
+        apps.columnconfigure(2,weight=1)
 
         news = ttk.LabelFrame(self.settings_tab, text="明日方舟官网维护公告", padding=12)
         news.pack(fill="x", pady=(12,0))
@@ -933,15 +908,7 @@ class ManagerApp:
             self.activity_toggle.configure(text="显示图表")
 
     def confirm_close(self):
-        choice = messagebox.askyesnocancel(
-            "关闭 MAA Agent 管理器",
-            "选择“是”退出管理器（Agent 继续运行）；\n选择“否”隐藏到托盘；选择“取消”返回。",
-            parent=self.root,
-        )
-        if choice is True:
-            self.exit_gui()
-        elif choice is False:
-            self.hide_to_tray()
+        self.hide_to_tray()
 
     def _on_tab_changed(self, _event=None):
         try:
@@ -968,6 +935,12 @@ class ManagerApp:
         if hasattr(self, "cpu_progress"):
             self.cpu_progress.set_palette(palette)
             self.memory_progress.set_palette(palette)
+        for name in ("next_schedule_cards", "schedule_cards", "snapshot_cards"):
+            widget = getattr(self, name, None)
+            if widget is not None:
+                widget.set_palette(palette)
+        if hasattr(self, "schedule_calendar"):
+            self.schedule_calendar.set_palette(palette)
         self._draw_header_gradient()
 
     def _theme_widget_tree(self, widget, palette):
@@ -1099,6 +1072,10 @@ class ManagerApp:
 
         threading.Thread(target=worker, daemon=True, name="maa-agent-restart").start()
 
+    def _display_instance(self, label: str) -> str:
+        alias = str((self.cfg.get("maa_instance_aliases") or {}).get(label, "")).strip()
+        return f"{alias}（{label}）" if alias else label
+
     def _maa_status(self) -> str:
         dirs = self.cfg.get("maa_instance_dirs", {})
         found: dict[str, list[int]] = {str(k): [] for k in dirs}
@@ -1124,7 +1101,7 @@ class ManagerApp:
                 continue
         lines = []
         for label in sorted(found):
-            lines.append(f"{label}: " + (f"运行中（PID {', '.join(map(str, found[label]))}）" if found[label] else "未检测到"))
+            lines.append(f"{self._display_instance(label)}: " + (f"运行中（PID {', '.join(map(str, found[label]))}）" if found[label] else "未检测到"))
         if unknown:
             lines.append(f"未映射 MAA: {len(unknown)} 个")
         try:
@@ -1135,7 +1112,7 @@ class ManagerApp:
                     continue
                 elapsed=max(0,(datetime.now().timestamp()-float(rec.get("since",datetime.now().timestamp())))/60)
                 label=key.split(":",1)[-1] if ":" in key else "MAA"
-                lines.append(f"⏳ {label} 缺失确认中：约 {max(0,sustain-elapsed):.1f} 分钟后报警")
+                lines.append(f"⏳ {self._display_instance(label)} 缺失确认中：约 {max(0,sustain-elapsed):.1f} 分钟后报警")
         except Exception:
             pass
         return "\n".join(lines) if lines else "未配置实例目录"
@@ -1158,9 +1135,9 @@ class ManagerApp:
             return "未检测到 MuMu 相关进程"
         return f"相关进程：{len(rows)} 个\n总内存：{total_mb / 1024:.1f} GB"
 
-    def _resource_status(self) -> str:
-        mem = psutil.virtual_memory()
-        cpu = psutil.cpu_percent(interval=None)
+    def _resource_status(self, cpu: float | None = None, mem=None) -> str:
+        mem = mem or psutil.virtual_memory()
+        cpu = psutil.cpu_percent(interval=None) if cpu is None else float(cpu)
         disks = []
         for item in self.cfg.get("monitor_disk_paths", ["C:\\", "D:\\"]):
             try:
@@ -1169,6 +1146,108 @@ class ManagerApp:
             except OSError:
                 pass
         return f"CPU：{cpu:.0f}%\n内存：{memory_text(mem.total / 1048576, mem.available / 1048576, mem.percent)}\n" + "\n".join(disks)
+
+    def _daily_state(self, day: date) -> dict:
+        try:
+            value = json.loads((STATE_DIR / f"daily_{day.isoformat()}.json").read_text(encoding="utf-8"))
+            return value if isinstance(value, dict) else {}
+        except Exception:
+            return {}
+
+    def _schedule_card_state(self, row: dict, now: datetime, daily_cache: dict[date, dict]) -> tuple[str, str, str]:
+        when = row["datetime"]
+        if row.get("skipped"):
+            return "已关闭", "本次不纳入运行监测", "off"
+        daily = daily_cache.setdefault(when.date(), self._daily_state(when.date()))
+        expected = when.strftime("%Y-%m-%d %H:%M")
+        observed = (daily.get("observed_runs") or {}).get(row["label"], [])
+        if any(str(item.get("occurrence")) == expected for item in observed if isinstance(item, dict)):
+            return "已检测启动", "Agent 已收到本次启动证据", "done"
+        digest = hashlib.sha1(f"{row['label']}|{expected}".encode("utf-8", errors="ignore")).hexdigest()
+        if (STATE_DIR / f"scheduled_alert_{digest}.txt").exists():
+            return "未检测到启动", "计划未触发、程序退出或被运行中任务阻断", "failed"
+        if any(expected in str(item) and str(row["label"]) in str(item) for item in (daily.get("schedule") or {}).get("unverified", [])):
+            return "无法核验", "当时 Agent 尚未覆盖该监测时段", "off"
+        if when <= now:
+            return "等待核验", "尚未收到本次启动证据", "off"
+        return "等待运行", "已加入后续监测", "next"
+
+    def _card_background(self, state: str) -> str:
+        dark = self.cfg.get("gui_dark_mode", True)
+        if state == "failed":
+            return "#3a2529" if dark else "#f9e0e3"
+        if state in {"done", "off"}:
+            return "#252d36" if dark else "#e3e8ed"
+        return self.palette["panel"]
+
+    def _bind_card_action(self, widgets: list[tk.Widget], callback) -> None:
+        for widget in widgets:
+            widget.bind("<Double-1>", callback)
+
+    def _render_schedule_rows(self, container: ScrollableFrame, rows: list[dict], *, compact: bool = False) -> None:
+        container.clear()
+        now = datetime.now()
+        daily_cache: dict[date, dict] = {}
+        previous_day = None
+        if not rows:
+            ttk.Label(container.body, text="这个时间范围内没有启用的计划。", style="Muted.TLabel", padding=14).pack(fill="x")
+            return
+        for index, row in enumerate(rows):
+            when = row["datetime"]
+            if when.date() != previous_day:
+                ttk.Label(
+                    container.body,
+                    text=f"────────  {when:%Y 年 %m 月 %d 日}  ────────",
+                    anchor="center",
+                    style="Muted.TLabel",
+                    padding=(4, 7),
+                ).pack(fill="x")
+                previous_day = when.date()
+            status, detail, state = self._schedule_card_state(row, now, daily_cache)
+            background = self._card_background(state)
+            card = tk.Frame(container.body, background=background, bd=0, highlightthickness=1, highlightbackground=self.palette["grid"])
+            card.pack(fill="x", padx=4, pady=4)
+            tk.Frame(card, width=9, background=time_of_day_color(when)).pack(side="left", fill="y")
+            content = tk.Frame(card, background=background, padx=12, pady=8)
+            content.pack(side="left", fill="both", expand=True)
+            switch_palette = dict(self.palette, bg=background)
+            switch = ToggleSwitch(
+                content,
+                value=not row.get("skipped"),
+                palette=switch_palette,
+                command=lambda enabled, item=row: self.set_occurrence_enabled(item, enabled),
+            )
+            switch.grid(row=0, column=0, rowspan=2, padx=(0, 13), sticky="w")
+            time_label = tk.Label(content, text=f"{when:%H:%M}", background=background, foreground=self.palette["fg"], font=("Segoe UI", 18, "bold"))
+            time_label.grid(row=0, column=1, rowspan=2, sticky="w")
+            name_label = tk.Label(content, text=self._display_instance(str(row["label"])), background=background, foreground=self.palette["fg"], font=("Microsoft YaHei UI", 11, "bold"))
+            name_label.grid(row=0, column=2, sticky="w", padx=(16, 8))
+            source = "MAA 当前配置" if str(row.get("source", "")).startswith("maa_gui") else "备用配置"
+            source_label = tk.Label(content, text=f"{when:%m 月 %d 日} · {source}", background=background, foreground=self.palette["muted"], font=("Microsoft YaHei UI", 9))
+            source_label.grid(row=1, column=2, sticky="w", padx=(16, 8))
+            status_color = self.palette["bad"] if state == "failed" else (self.palette["good"] if state == "next" else self.palette["muted"])
+            status_label = tk.Label(content, text=status, background=background, foreground=status_color, font=("Microsoft YaHei UI", 10, "bold"))
+            status_label.grid(row=0, column=3, sticky="e", padx=(8, 0))
+            detail_label = tk.Label(content, text=detail, background=background, foreground=self.palette["muted"], font=("Microsoft YaHei UI", 8))
+            detail_label.grid(row=1, column=3, sticky="e", padx=(8, 0))
+            content.columnconfigure(2, weight=1)
+            if not compact:
+                ttk.Button(content, text="修改时间", command=lambda item=row: self.move_occurrence(item)).grid(row=0, column=4, rowspan=2, padx=(12, 0))
+            self._bind_card_action(
+                [card, content, time_label, name_label, source_label, status_label, detail_label],
+                lambda _event, item=row: self.move_occurrence(item),
+            )
+        container.refresh_scrollregion()
+
+    def set_occurrence_enabled(self, row: dict, enabled: bool) -> None:
+        override = row.get("override") or {}
+        if enabled and override.get("action") == "skip":
+            remove_override(BASE_DIR, self.cfg, override_id=override.get("id"))
+            self._set_footer("已开启本次运行监测。")
+        elif not enabled and not row.get("skipped"):
+            add_override(BASE_DIR, self.cfg, row["label"], row["original_datetime"], "skip", note="GUI 监测开关")
+            self._set_footer("已关闭本次运行监测；MAA 自己的定时器未改动。")
+        self.root.after_idle(lambda: (self.refresh_schedule(), self.refresh_dashboard()))
 
     def refresh_dashboard(self):
         row = validated_agent_for_dir(BASE_DIR)
@@ -1186,10 +1265,10 @@ class ManagerApp:
             self.agent_status.configure(text=f"● 当前目录未运行；另一份 Agent 正在运行（PID {others[0]['pid']}）", style="Bad.TLabel")
         else:
             self.agent_status.configure(text="● Agent 已停止", style="Bad.TLabel")
+        vm = psutil.virtual_memory(); cpu = psutil.cpu_percent(interval=None)
         self.card_vars["MAA"].set(self._maa_status())
         self.card_vars["MuMu"].set(self._mumu_status())
-        self.card_vars["资源"].set(self._resource_status())
-        vm = psutil.virtual_memory(); cpu = psutil.cpu_percent(interval=None)
+        self.card_vars["资源"].set(self._resource_status(cpu=cpu, mem=vm))
         self.cpu_progress.set_value(cpu, f"CPU {cpu:.0f}%")
         used_gb = (vm.total - vm.available) / 1024**3
         self.memory_progress.set_value(vm.percent, f"内存 {vm.percent:.0f}% · 已用 {used_gb:.1f} GB")
@@ -1200,20 +1279,10 @@ class ManagerApp:
         self.dashboard_resource_chart.set_data(mini_rows, today, float(self.cfg.get("memory_pressure_percent", 88)))
 
         now = datetime.now()
-        rows, meta = effective_occurrences(BASE_DIR, self.cfg, now, now + timedelta(hours=36), include_skipped=True)
-        parts = []
-        for item in rows[:16]:
-            tag = "跳过" if item.get("skipped") else ("改时" if item.get("override") else "")
-            parts.append(f"{item['datetime']:%m-%d %H:%M}  {item['label']:<5}  {tag}")
-        if meta:
-            parts.append("")
-            for label in sorted(meta):
-                parts.append(f"{label} 来源：{meta[label].get('source', 'unknown')}")
-        self._set_text(self.next_schedule, "\n".join(parts) if parts else "未来 36 小时没有启用的计划。")
+        rows, _meta = effective_occurrences(BASE_DIR, self.cfg, now, now + timedelta(hours=36), include_skipped=True)
+        self._render_schedule_rows(self.next_schedule_cards, rows[:16], compact=True)
 
     def refresh_schedule(self):
-        for iid in self.schedule_tree.get_children():
-            self.schedule_tree.delete(iid)
         start_hour=int(self.cfg.get("operational_day_start_hour",4))
         start=datetime.combine(self.schedule_day,datetime.min.time()).replace(hour=start_hour)
         end=start+timedelta(days=1)
@@ -1223,21 +1292,8 @@ class ManagerApp:
             BASE_DIR, self.cfg, start, end, include_skipped=True
         )
         self.schedule_rows=[row for row in self.schedule_rows if start <= row["datetime"] < end]
-        for idx, row in enumerate(self.schedule_rows):
-            original = row["original_datetime"]
-            effective = "— 本次跳过 —" if row.get("skipped") else row["datetime"].strftime("%Y-%m-%d %H:%M")
-            source = "MAA 实时配置" if str(row.get("source", "")).startswith("maa_gui") else "Agent 备用配置"
-            ov = row.get("override")
-            ov_text = ""
-            if ov:
-                ov_text = "跳过本次" if ov.get("action") == "skip" else f"改到 {effective}"
-            boundary=" · 04:00 日界线" if original.hour==start_hour and original.minute==0 else ""
-            moved = f"原计划 {original:%Y-%m-%d %H:%M} · " if row.get("override") and row["override"].get("action")=="move" else ""
-            enabled="○ 关闭" if row.get("skipped") else "● 开启"
-            tag = "off" if row.get("skipped") else "on"
-            self.schedule_tree.insert("", "end", iid=str(idx), values=(enabled,row["label"],effective,source,(moved+ov_text+boundary).strip(" ·")),tags=(tag,))
-        self.schedule_tree.tag_configure("on", foreground=self.palette["good"])
-        self.schedule_tree.tag_configure("off", foreground=self.palette["muted"])
+        self.schedule_calendar.set_date(self.schedule_day)
+        self._render_schedule_rows(self.schedule_cards, self.schedule_rows)
 
     def change_schedule_day(self,delta:int):
         self.schedule_day += timedelta(days=delta); self.refresh_schedule()
@@ -1252,23 +1308,34 @@ class ManagerApp:
             messagebox.showerror("日期格式错误","请输入 YYYY-MM-DD。",parent=self.root)
 
     def open_schedule_calendar(self):
-        try:
-            selected = datetime.strptime(self.schedule_day_var.get().strip(), "%Y-%m-%d").date()
-        except ValueError:
-            selected = self.schedule_day
-        CalendarPopup(self.root, selected, self.set_schedule_day, self.palette)
+        self.calendar_visible = not self.calendar_visible
+        if self.calendar_visible:
+            try:
+                selected = datetime.strptime(self.schedule_day_var.get().strip(), "%Y-%m-%d").date()
+            except ValueError:
+                selected = self.schedule_day
+            self.schedule_calendar.set_date(selected)
+            self.schedule_calendar.pack(fill="x", padx=180, pady=(0, 8), before=self.schedule_intro)
+            self.calendar_toggle.configure(text="▲")
+        else:
+            self.schedule_calendar.pack_forget()
+            self.calendar_toggle.configure(text="▼")
 
     def set_schedule_day(self, selected: date):
         self.schedule_day = selected
+        if self.calendar_visible:
+            self.calendar_visible = False
+            self.schedule_calendar.pack_forget()
+            self.calendar_toggle.configure(text="▼")
         self.refresh_schedule()
 
-    def toggle_occurrence(self):
-        row=self._selected_schedule()
+    def toggle_occurrence(self, row: dict | None = None):
+        row=row or self._selected_schedule()
         if not row: return
         if row.get("override") and row["override"].get("action")=="skip":
-            remove_override(BASE_DIR,self.cfg,override_id=row["override"].get("id")); self._set_footer("已开启本次监督。")
+            remove_override(BASE_DIR,self.cfg,override_id=row["override"].get("id")); self._set_footer("已开启本次监测。")
         else:
-            add_override(BASE_DIR,self.cfg,row["label"],row["original_datetime"],"skip",note="GUI 监督开关"); self._set_footer("已关闭本次监督；MAA 自己的定时器未改动。")
+            add_override(BASE_DIR,self.cfg,row["label"],row["original_datetime"],"skip",note="GUI 监测开关"); self._set_footer("已关闭本次监测；MAA 自己的定时器未改动。")
         self.refresh_schedule()
 
     def toggle_all_occurrences(self, enabled: bool):
@@ -1281,15 +1348,12 @@ class ManagerApp:
                 add_override(BASE_DIR, self.cfg, row["label"], row["original_datetime"], "skip", note="GUI 当天批量开关")
                 changed += 1
         state = "开启" if enabled else "关闭"
-        self._set_footer(f"已将当天 {changed} 条计划的监督批量{state}。")
+        self._set_footer(f"已将当天 {changed} 条计划的监测批量{state}。")
         self.refresh_schedule()
 
     def _selected_schedule(self) -> dict | None:
-        selected = self.schedule_tree.selection()
-        if not selected:
-            messagebox.showinfo("请选择计划", "请先选中一条计划。", parent=self.root)
-            return None
-        return self.schedule_rows[int(selected[0])]
+        messagebox.showinfo("请选择计划", "请直接使用计划卡片上的开关或“修改时间”按钮。", parent=self.root)
+        return None
 
     def skip_occurrence(self):
         row = self._selected_schedule()
@@ -1299,8 +1363,8 @@ class ManagerApp:
         self._set_footer("已标记：本次不纳入 Agent 漏跑判断。")
         self.refresh_schedule()
 
-    def move_occurrence(self):
-        row = self._selected_schedule()
+    def move_occurrence(self, row: dict | None = None):
+        row = row or self._selected_schedule()
         if not row:
             return
         default = row["datetime"].strftime("%Y-%m-%d %H:%M")
@@ -1328,6 +1392,34 @@ class ManagerApp:
         self._set_footer("已撤销一次性例外。")
         self.refresh_schedule()
 
+    def _render_resource_cards(self, rows: list[dict]) -> None:
+        self.snapshot_cards.clear()
+        abnormal = [row for row in rows if row.get("abnormal")]
+        if not abnormal:
+            ttk.Label(self.snapshot_cards.body, text="这一天没有异常采样。", style="Muted.TLabel", padding=12).pack(fill="x")
+            return
+        for row in abnormal:
+            used, available, _total = memory_values(row)
+            when = datetime.fromtimestamp(float(row.get("epoch", 0)))
+            reasons = "；".join(row.get("abnormal_reasons") or []) or f"内存 {row.get('ram', 0):.0f}%"
+            apps = row.get("top_apps") or row.get("top_processes") or []
+            top = "   ".join(f"{item.get('name')} {item.get('mb', 0)/1024:.1f} GB" for item in apps[:3]) or "没有进程明细"
+            background = self.palette["panel"]
+            card = tk.Frame(self.snapshot_cards.body, background=background, highlightthickness=1, highlightbackground=self.palette["grid"], padx=12, pady=8)
+            card.pack(fill="x", padx=4, pady=4)
+            time_label = tk.Label(card, text=f"{when:%H:%M}", background=background, foreground=self.palette["warning"], font=("Segoe UI", 15, "bold"))
+            time_label.grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 16))
+            reason_label = tk.Label(card, text=reasons, background=background, foreground=self.palette["fg"], font=("Microsoft YaHei UI", 10, "bold"))
+            reason_label.grid(row=0, column=1, sticky="w")
+            memory_label = tk.Label(card, text=f"已用 {used/1024:.1f} GB · 可用 {available/1024:.1f} GB", background=background, foreground=self.palette["muted"])
+            memory_label.grid(row=1, column=1, sticky="w")
+            top_label = tk.Label(card, text=top, background=background, foreground=self.palette["muted"], anchor="e")
+            top_label.grid(row=0, column=2, rowspan=2, sticky="e", padx=(18, 0))
+            card.columnconfigure(1, weight=1)
+            callback = lambda _event, item=row: self.show_resource_detail(item)
+            self._bind_card_action([card, time_label, reason_label, memory_label, top_label], callback)
+        self.snapshot_cards.refresh_scrollregion()
+
     def refresh_resources(self):
         start_hour=int(self.cfg.get("operational_day_start_hour",4))
         rows=load_resource_calendar_day(BASE_DIR,self.resource_day,start_hour)
@@ -1341,16 +1433,7 @@ class ManagerApp:
             self.resource_summary_var.set(f"采样 {len(rows)} 点 · 内存最低/最高 {min(ram):.0f}% / {max(ram):.0f}% · 峰值已用 {max(used_values)/1024:.1f} GB · 异常点 {sum(bool(x.get('abnormal')) for x in rows)}")
         else:
             self.resource_summary_var.set("这一天还没有采样；Agent 运行后正常状态每 5 分钟、异常状态每 1 分钟记录。")
-        for iid in self.snapshot_tree.get_children(): self.snapshot_tree.delete(iid)
-        for idx,row in enumerate(rows):
-            if not row.get("abnormal"):
-                continue
-            when=datetime.fromtimestamp(float(row.get("epoch",0))).strftime("%m-%d %H:%M")
-            used,available,_total=memory_values(row)
-            reason="；".join(row.get("abnormal_reasons") or []) or f"内存 {row.get('ram',0):.0f}%"
-            apps=row.get("top_apps") or row.get("top_processes") or []
-            processes=f"已用 {used/1024:.1f}GB / 可用 {available/1024:.1f}GB；"+"；".join(f"{x.get('name')} {x.get('mb',0)/1024:.1f}GB" for x in apps[:3])
-            self.snapshot_tree.insert("","end",iid=str(idx),values=(when,reason,processes))
+        self._render_resource_cards(rows)
 
     def change_resource_day(self,delta:int):
         self.resource_day += timedelta(days=delta); self.refresh_resources()
@@ -1359,11 +1442,7 @@ class ManagerApp:
         self.resource_day=datetime.now().date(); self.refresh_resources()
 
     def open_selected_snapshot(self, _event=None):
-        selected = self.snapshot_tree.selection()
-        if selected:
-            index = int(selected[0])
-            if 0 <= index < len(self.resource_rows):
-                self.show_resource_detail(self.resource_rows[index])
+        return None
 
     def load_news_center(self, result: dict | None = None):
         data = result or load_news_cache(BASE_DIR, self.cfg)
@@ -1481,6 +1560,9 @@ class ManagerApp:
         paths=self.cfg.get("launch_paths") or {}; autos=self.cfg.get("auto_start_apps_with_agent") or {}
         for label in self.launch_path_vars:
             self.launch_path_vars[label].set(str(paths.get(label,""))); self.autostart_vars[label].set(bool(autos.get(label,False)))
+        aliases=self.cfg.get("maa_instance_aliases") or {}
+        for label,var in self.instance_alias_vars.items():
+            var.set(str(aliases.get(label,"")))
         self.news_enabled_var.set(bool(self.cfg.get("enable_news_monitor",True)))
         self.news_times_var.set(", ".join(str(x) for x in self.cfg.get("news_check_times",["00:05","12:05"])))
         try:
@@ -1530,6 +1612,7 @@ class ManagerApp:
         self.cfg["enable_memory_alert"]=self.memory_alert_var.get()
         self.cfg["launch_paths"]={k:v.get().strip() for k,v in self.launch_path_vars.items()}
         self.cfg["auto_start_apps_with_agent"]={k:v.get() for k,v in self.autostart_vars.items()}
+        self.cfg["maa_instance_aliases"]={k:v.get().strip() for k,v in self.instance_alias_vars.items()}
         self.cfg["enable_news_monitor"]=self.news_enabled_var.get(); self.cfg["news_check_times"]=values
         self.cfg["bark_retry_attempts"]=retry_attempts; self.cfg["bark_retry_sleep_seconds"]=retry_sleep; self.cfg["bark_retry_infinite"]=self.bark_retry_infinite_var.get()
         try:
@@ -1544,6 +1627,7 @@ class ManagerApp:
             messagebox.showerror("保存失败",str(exc),parent=self.root); return
         if old_dark != self.cfg["gui_dark_mode"]:
             self._apply_runtime_theme()
+            self.refresh_dashboard(); self.refresh_schedule(); self.refresh_resources()
         self.config_dirty=False; self.populate_config(); self._set_footer("设置已保存；Agent 下一轮自动读取。")
 
     def install_shortcuts(self):
