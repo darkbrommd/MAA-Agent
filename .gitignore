@@ -1,0 +1,19 @@
+# Machine-local runtime and secrets
+config.json
+.venv/
+__pycache__/
+*.py[cod]
+
+# Generated state, logs and local recovery copies
+state/
+logs/
+backups/
+disabled_alerts/
+MANIFEST.sha256
+*.tmp
+
+# Editor / OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,60 @@
+{
+  "bark_server": "https://api.day.app",
+  "bark_key": "REPLACE_WITH_YOUR_BARK_KEY",
+  "enable_bark": true,
+  "bark_retry_attempts": 3,
+  "bark_retry_sleep_seconds": 3,
+  "bark_retry_infinite": false,
+  "bark_queue_retry_per_loop": 3,
+  "bark_queue_max_items": 100,
+  "bark_queue_ttl_hours": 6,
+  "use_deepseek": false,
+  "deepseek_api_key": "",
+  "deepseek_model": "deepseek-flash",
+  "maa_process_names": ["MAA.exe"],
+  "mumu_process_names": [
+    "MuMuPlayer.exe",
+    "NemuPlayer.exe",
+    "MuMuVMMHeadless.exe",
+    "MuMuNxMain.exe",
+    "MuMuNxDevice.exe",
+    "MuMuNxService.exe",
+    "MuMuRemoteBackend.exe",
+    "MuMuVMMSVC.exe"
+  ],
+  "maa_instance_dirs": {
+    "MAA1": "D:\\MAA\\MAA1",
+    "MAA2": "D:\\MAA\\MAA2"
+  },
+  "maa_gui_config_paths": {
+    "MAA1": "D:\\MAA\\MAA1\\config\\gui.new.json",
+    "MAA2": "D:\\MAA\\MAA2\\config\\gui.new.json"
+  },
+  "maa_log_paths": [
+    "D:\\MAA\\MAA1\\debug\\asst.log",
+    "D:\\MAA\\MAA2\\debug\\asst.log"
+  ],
+  "check_interval_seconds": 60,
+  "process_missing_sustain_minutes": 3,
+  "enable_memory_alert": true,
+  "memory_pressure_percent": 88,
+  "memory_critical_percent": 95,
+  "memory_pressure_sustain_minutes": 30,
+  "memory_critical_sustain_minutes": 10,
+  "memory_critical_available_mb": 1536,
+  "resource_sample_normal_minutes": 5,
+  "resource_sample_abnormal_minutes": 1,
+  "resource_history_keep_days": 30,
+  "operational_day_start_hour": 4,
+  "monitor_disk_paths": ["C:\\", "D:\\"],
+  "enable_news_monitor": true,
+  "news_check_times": ["00:05", "12:05"],
+  "news_keywords": ["闪断更新", "停机维护"],
+  "news_maintenance_action": "supervision_only",
+  "gui_start_agent_on_launch": true,
+  "gui_start_minimized": true,
+  "gui_dark_mode": true,
+  "launch_paths": {"MAA1": "", "MAA2": "", "MuMu": ""},
+  "auto_start_apps_with_agent": {"MAA1": false, "MAA2": false, "MuMu": false}
+}
+
