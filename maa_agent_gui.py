@@ -64,8 +64,8 @@ CONFIG_HELP = {
 
 PALETTES = {
     "dark": {
-        "bg": "#11161d", "panel": "#18212b", "field": "#202c38", "fg": "#f2f5f7",
-        "muted": "#aab7c4", "grid": "#324353", "grid_soft": "#253441", "ram": "#ff6b81",
+        "bg": "#0b1118", "panel": "#17222e", "field": "#243342", "fg": "#f2f5f7",
+        "muted": "#a8b7c6", "grid": "#3b4e60", "grid_soft": "#2b3d4d", "ram": "#ff6b81",
         "good": "#5bd38b", "bad": "#ff7b72", "accent": "#62a8ff", "tooltip": "#071019",
         "warning": "#ffb86b",
     },
@@ -437,7 +437,19 @@ class ManagerApp:
         self.tray_ready = False
         self.refresh_job = None
         self.schedule_rows: list[dict] = []
-        self.schedule_day = operational_date(datetime.now(), int(self.cfg.get("operational_day_start_hour", 4)))
+        self.schedule_day = datetime.now().date()
+        self.schedule_range_start = self.schedule_day - timedelta(days=1)
+        self.schedule_range_end = self.schedule_day + timedelta(days=1)
+        self._schedule_signature = None
+        self._dashboard_schedule_signature = None
+        self._resource_signature = None
+        self._schedule_rendering = False
+        self._schedule_initial_position_pending = True
+        self._schedule_extend_pending = False
+        self._schedule_restore_day = None
+        self._schedule_restoring = False
+        self.schedule_calendar_dialog = None
+        self.setting_switches: list[ToggleSwitch] = []
         self.resource_day = datetime.now().date()
         self.resource_rows: list[dict] = []
         self.timing_vars: dict[str, tk.StringVar] = {}
@@ -446,7 +458,7 @@ class ManagerApp:
         self._apply_runtime_theme()
         self.root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
         self._setup_tray()
-        self.refresh_all()
+        self.refresh_all(full=True)
         if self.cfg.get("gui_start_agent_on_launch", True) and not validated_agent_for_dir(BASE_DIR):
             self.root.after(300, self.start_agent)
         if "--startup" in sys.argv and self.cfg.get("gui_start_minimized", True):
@@ -505,6 +517,7 @@ class ManagerApp:
         style.configure("Activity.TLabelframe", background=palette["panel"])
         style.configure("Activity.TLabelframe.Label", background=palette["panel"], foreground=palette["fg"])
         style.configure("Activity.TFrame", background=palette["panel"])
+        style.configure("Activity.TLabel", background=palette["panel"], foreground=palette["fg"])
         style.configure("Activity.TPanedwindow", background=palette["panel"])
         style.configure("TNotebook.Tab", background=palette["field"], foreground=palette["muted"], padding=(14, 8))
         style.map(
@@ -520,6 +533,7 @@ class ManagerApp:
         style.configure("Horizontal.TProgressbar", troughcolor=palette["field"], background=palette["accent"])
         style.configure("Title.TLabel", font=("Microsoft YaHei UI", 18, "bold"))
         style.configure("Heading.TLabel", font=("Microsoft YaHei UI", 11, "bold"))
+        style.configure("DateTitle.TLabel", font=("Microsoft YaHei UI", 15, "bold"), foreground=palette["fg"])
         style.configure("Good.TLabel", foreground=palette["good"], font=("Microsoft YaHei UI", 12, "bold"))
         style.configure("Bad.TLabel", foreground=palette["bad"], font=("Microsoft YaHei UI", 12, "bold"))
         style.configure("Muted.TLabel", foreground=palette["muted"])
@@ -643,7 +657,7 @@ class ManagerApp:
         self.next_schedule_cards.pack(fill="both", expand=True)
         activity_bar = ttk.Frame(activity_frame, style="Activity.TFrame")
         activity_bar.pack(fill="x", pady=(0, 5))
-        ttk.Label(activity_bar, text="显示").pack(side="left")
+        ttk.Label(activity_bar, text="显示", style="Activity.TLabel").pack(side="left")
         self.dashboard_log_mode = tk.StringVar(value="仅事故与恢复")
         ttk.Combobox(activity_bar, textvariable=self.dashboard_log_mode, values=("仅事故与恢复", "完整日志"), state="readonly", width=16).pack(side="left", padx=6)
         self.activity_expanded = True
@@ -664,24 +678,33 @@ class ManagerApp:
     def _build_schedule(self):
         nav = ttk.Frame(self.schedule_tab)
         nav.pack(fill="x", pady=(0, 8))
-        ttk.Button(nav, text="‹ 前一天", command=lambda: self.change_schedule_day(-1)).pack(side="left")
-        ttk.Button(nav, text="今天", command=self.schedule_today).pack(side="left", padx=5)
-        ttk.Button(nav, text="后一天 ›", command=lambda: self.change_schedule_day(1)).pack(side="left")
+        nav.columnconfigure(0, weight=1, uniform="schedule-nav")
+        nav.columnconfigure(1, weight=0)
+        nav.columnconfigure(2, weight=1, uniform="schedule-nav")
+        left_nav = ttk.Frame(nav)
+        left_nav.grid(row=0, column=0, sticky="w")
+        ttk.Button(left_nav, text="‹ 前一天", command=lambda: self.change_schedule_day(-1)).pack(side="left")
+        ttk.Button(left_nav, text="今天", command=self.schedule_today).pack(side="left", padx=5)
+        ttk.Button(left_nav, text="后一天 ›", command=lambda: self.change_schedule_day(1)).pack(side="left")
         self.schedule_day_var = tk.StringVar()
-        self.schedule_day_entry = ttk.Entry(nav, textvariable=self.schedule_day_var, width=12)
-        self.schedule_day_entry.pack(side="left", padx=(18, 4))
-        self.schedule_day_entry.bind("<Return>", lambda _event: self.goto_schedule_day())
-        self.calendar_toggle = ttk.Button(nav, text="▼", width=3, command=self.open_schedule_calendar)
+        self.schedule_day_title_var = tk.StringVar()
+        date_picker = ttk.Frame(nav)
+        date_picker.grid(row=0, column=1)
+        self.schedule_day_title = ttk.Label(date_picker, textvariable=self.schedule_day_title_var, style="DateTitle.TLabel", cursor="hand2")
+        self.schedule_day_title.pack(side="left", padx=(10, 8))
+        self.schedule_day_title.bind("<Button-1>", lambda _event: self.open_schedule_calendar())
+        self.calendar_toggle = ttk.Button(date_picker, text="▦", width=3, command=self.open_schedule_calendar)
         self.calendar_toggle.pack(side="left")
-        ttk.Button(nav, text="→", width=3, command=self.goto_schedule_day).pack(side="left", padx=(4, 0))
         self.schedule_window_var = tk.StringVar()
-        ttk.Label(nav, textvariable=self.schedule_window_var, style="Heading.TLabel").pack(side="right")
-        self.schedule_calendar = InlineCalendar(self.schedule_tab, self.schedule_day, self.set_schedule_day, self.palette)
-        self.calendar_visible = False
+        ttk.Label(nav, textvariable=self.schedule_window_var, style="Muted.TLabel").grid(row=0, column=2, sticky="e")
         intro = "开关控制的是“本管理器是否监测这一次运行”，不会热改 MAA。04:00 是统计日边界，边界计划会特别标记。"
         self.schedule_intro = ttk.Label(self.schedule_tab, text=intro, style="Muted.TLabel")
         self.schedule_intro.pack(anchor="w", pady=(0, 8))
-        self.schedule_cards = ScrollableFrame(self.schedule_tab, palette=self.palette)
+        self.schedule_cards = ScrollableFrame(
+            self.schedule_tab,
+            palette=self.palette,
+            on_view_change=self._on_schedule_view_change,
+        )
         self.schedule_cards.pack(fill="both", expand=True)
         actions = ttk.Frame(self.schedule_tab)
         actions.pack(fill="x", pady=(10, 0))
@@ -739,6 +762,25 @@ class ManagerApp:
         self.news_items: list[dict] = []
         self.load_news_center()
 
+    def _toggle_field(self, master, text: str, variable: tk.BooleanVar) -> ttk.Frame:
+        """Create one consistent iOS-style boolean control bound to ``variable``."""
+        field = ttk.Frame(master)
+        label = ttk.Label(field, text=text, cursor="hand2")
+        label.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        switch = ToggleSwitch(
+            field,
+            value=bool(variable.get()),
+            palette=self.palette,
+            width=48,
+            height=26,
+            command=lambda enabled: variable.set(bool(enabled)),
+        )
+        switch.pack(side="right")
+        label.bind("<Button-1>", lambda _event: variable.set(not variable.get()))
+        variable.trace_add("write", lambda *_args, control=switch, var=variable: control.set(bool(var.get())))
+        self.setting_switches.append(switch)
+        return field
+
     def _build_settings(self):
         behavior = ttk.LabelFrame(self.settings_tab, text="启动与后台行为", padding=12)
         behavior.pack(fill="x")
@@ -747,11 +789,11 @@ class ManagerApp:
         self.start_minimized_var=tk.BooleanVar()
         self.dark_mode_var=tk.BooleanVar()
         self.memory_alert_var=tk.BooleanVar()
-        ttk.Checkbutton(behavior,text="登录 Windows 后启动管理器",variable=self.start_with_windows_var).grid(row=0,column=0,sticky="w",padx=(0,24),pady=4)
-        ttk.Checkbutton(behavior,text="打开管理器时确保 Agent 已启动",variable=self.start_agent_with_gui_var).grid(row=0,column=1,sticky="w",pady=4)
-        ttk.Checkbutton(behavior,text="开机启动时直接进入托盘",variable=self.start_minimized_var).grid(row=1,column=0,sticky="w",pady=4)
-        ttk.Checkbutton(behavior,text="深色模式（含资源图表）",variable=self.dark_mode_var).grid(row=1,column=1,sticky="w",pady=4)
-        ttk.Checkbutton(behavior,text="启用内存压力报警",variable=self.memory_alert_var).grid(row=2,column=0,sticky="w",pady=4)
+        self._toggle_field(behavior,"登录 Windows 后启动管理器",self.start_with_windows_var).grid(row=0,column=0,sticky="ew",padx=(0,24),pady=4)
+        self._toggle_field(behavior,"打开管理器时确保 Agent 已启动",self.start_agent_with_gui_var).grid(row=0,column=1,sticky="ew",pady=4)
+        self._toggle_field(behavior,"开机启动时直接进入托盘",self.start_minimized_var).grid(row=1,column=0,sticky="ew",padx=(0,24),pady=4)
+        self._toggle_field(behavior,"深色模式（含资源图表）",self.dark_mode_var).grid(row=1,column=1,sticky="ew",pady=4)
+        self._toggle_field(behavior,"启用内存压力报警",self.memory_alert_var).grid(row=2,column=0,sticky="ew",padx=(0,24),pady=4)
         ttk.Label(behavior,text="关闭后仍记录资源历史，但不会发送内存压力通知。",style="Muted.TLabel").grid(row=2,column=1,sticky="w",pady=4)
         ttk.Label(behavior,text="任务栏固定由 Windows 管理：桌面和开始菜单快捷方式已创建，可右键它选择“固定到任务栏”。",style="Muted.TLabel").grid(row=3,column=0,columnspan=2,sticky="w",pady=(8,0))
 
@@ -772,13 +814,13 @@ class ManagerApp:
             ttk.Entry(apps,textvariable=path_var,width=58).grid(row=row,column=2,sticky="ew",padx=5)
             ttk.Button(apps,text="浏览…",command=lambda x=label:self.choose_launch_path(x)).grid(row=row,column=3,padx=4)
             ttk.Button(apps,text="立即启动",command=lambda x=label:self.launch_configured(x)).grid(row=row,column=4,padx=4)
-            ttk.Checkbutton(apps,text="随 Agent 启动",variable=auto_var).grid(row=row,column=5,sticky="w",padx=(10,0))
+            self._toggle_field(apps,"随 Agent 启动",auto_var).grid(row=row,column=5,sticky="ew",padx=(10,0))
         apps.columnconfigure(2,weight=1)
 
         news = ttk.LabelFrame(self.settings_tab, text="明日方舟官网维护公告", padding=12)
         news.pack(fill="x", pady=(12,0))
         self.news_enabled_var=tk.BooleanVar(); self.news_times_var=tk.StringVar(); self.news_status_var=tk.StringVar()
-        ttk.Checkbutton(news,text="启用官网公告监控",variable=self.news_enabled_var).grid(row=0,column=0,sticky="w")
+        self._toggle_field(news,"启用官网公告监控",self.news_enabled_var).grid(row=0,column=0,sticky="ew")
         ttk.Label(news,text="每日检查（逗号分隔）").grid(row=0,column=1,sticky="e",padx=(20,5))
         ttk.Entry(news,textvariable=self.news_times_var,width=20).grid(row=0,column=2,sticky="w")
         ttk.Label(news,text="仅新增且标题/摘要命中维护关键词时读取正文；普通公告不调用 DeepSeek，也不发送通知。",style="Muted.TLabel").grid(row=1,column=0,columnspan=4,sticky="w",pady=(8,0))
@@ -790,7 +832,7 @@ class ManagerApp:
         ttk.Entry(bark,textvariable=self.bark_retry_attempts_var,width=8).grid(row=0,column=1,sticky="w")
         ttk.Label(bark,text="每次间隔（秒）").grid(row=0,column=2,sticky="e",padx=(22,6))
         ttk.Entry(bark,textvariable=self.bark_retry_sleep_var,width=8).grid(row=0,column=3,sticky="w")
-        ttk.Checkbutton(bark,text="无限保留失败消息并持续补发（不会阻塞监控主循环）",variable=self.bark_retry_infinite_var).grid(row=0,column=4,sticky="w",padx=(24,0))
+        self._toggle_field(bark,"无限保留失败消息并持续补发（不会阻塞监控主循环）",self.bark_retry_infinite_var).grid(row=0,column=4,sticky="ew",padx=(24,0))
         bar=ttk.Frame(self.settings_tab); bar.pack(fill="x",pady=(14,0))
         ttk.Button(bar,text="修复桌面与开始菜单快捷方式",command=self.install_shortcuts).pack(side="left")
         ttk.Button(bar,text="保存设置",command=self.save_settings).pack(side="right")
@@ -815,11 +857,11 @@ class ManagerApp:
         self.daily_time_var = tk.StringVar()
         self.deepseek_daily_var = tk.BooleanVar()
         self.proxy_check_var = tk.BooleanVar()
-        ttk.Checkbutton(report, text="启用每日报告", variable=self.enable_daily_var).grid(row=0, column=0, sticky="w", padx=(0, 16))
+        self._toggle_field(report, "启用每日报告", self.enable_daily_var).grid(row=0, column=0, sticky="ew", padx=(0, 16))
         ttk.Label(report, text="发送时间（HH:MM）").grid(row=0, column=1, sticky="e")
         ttk.Entry(report, textvariable=self.daily_time_var, width=9).grid(row=0, column=2, sticky="w", padx=(6, 18))
-        ttk.Checkbutton(report, text="有价值时调用 DeepSeek", variable=self.deepseek_daily_var).grid(row=0, column=3, sticky="w")
-        ttk.Checkbutton(report, text="启用系统代理健康检查", variable=self.proxy_check_var).grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        self._toggle_field(report, "有价值时调用 DeepSeek", self.deepseek_daily_var).grid(row=0, column=3, sticky="ew")
+        self._toggle_field(report, "启用系统代理健康检查", self.proxy_check_var).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
 
         grid = ttk.LabelFrame(self.timing_tab, text="判断与采样时间", padding=12)
         grid.pack(fill="x", pady=(12, 0))
@@ -866,7 +908,7 @@ class ManagerApp:
         ttk.Radiobutton(bar, text="运行日志", value="agent.log", variable=self.log_choice, command=self.refresh_logs).pack(side="left")
         ttk.Radiobutton(bar, text="决策日志", value="decision.log", variable=self.log_choice, command=self.refresh_logs).pack(side="left", padx=10)
         self.auto_log_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(bar, text="自动刷新", variable=self.auto_log_var).pack(side="right", padx=8)
+        self._toggle_field(bar, "自动刷新", self.auto_log_var).pack(side="right", padx=8)
         ttk.Button(bar, text="刷新", command=self.refresh_logs).pack(side="right")
         self.full_log_mode=tk.StringVar(value="仅事故与恢复")
         ttk.Combobox(bar,textvariable=self.full_log_mode,values=("仅事故与恢复","完整日志"),state="readonly",width=16).pack(side="right",padx=8)
@@ -918,6 +960,8 @@ class ManagerApp:
         if selected is self.resource_tab:
             self.resource_day = datetime.now().date()
             self.refresh_resources()
+        elif selected is self.schedule_tab:
+            self.refresh_schedule()
         elif selected is self.news_tab:
             self.load_news_center()
 
@@ -941,6 +985,16 @@ class ManagerApp:
                 widget.set_palette(palette)
         if hasattr(self, "schedule_calendar"):
             self.schedule_calendar.set_palette(palette)
+        for switch in getattr(self, "setting_switches", []):
+            try:
+                switch.set_palette(palette)
+            except tk.TclError:
+                pass
+        if self.schedule_calendar_dialog is not None:
+            try:
+                self.schedule_calendar_dialog.configure(background=palette["bg"])
+            except tk.TclError:
+                pass
         self._draw_header_gradient()
 
     def _theme_widget_tree(self, widget, palette):
@@ -1186,6 +1240,8 @@ class ManagerApp:
 
     def _render_schedule_rows(self, container: ScrollableFrame, rows: list[dict], *, compact: bool = False) -> None:
         container.clear()
+        container._schedule_day_widgets = []
+        container._schedule_row_widgets = []
         now = datetime.now()
         daily_cache: dict[date, dict] = {}
         previous_day = None
@@ -1195,19 +1251,28 @@ class ManagerApp:
         for index, row in enumerate(rows):
             when = row["datetime"]
             if when.date() != previous_day:
-                ttk.Label(
+                day_label = ttk.Label(
                     container.body,
                     text=f"────────  {when:%Y 年 %m 月 %d 日}  ────────",
                     anchor="center",
                     style="Muted.TLabel",
                     padding=(4, 7),
-                ).pack(fill="x")
+                )
+                day_label._schedule_day = when.date()
+                day_label.pack(fill="x")
+                container._schedule_day_widgets.append(day_label)
                 previous_day = when.date()
             status, detail, state = self._schedule_card_state(row, now, daily_cache)
             background = self._card_background(state)
             card = tk.Frame(container.body, background=background, bd=0, highlightthickness=1, highlightbackground=self.palette["grid"])
             card.pack(fill="x", padx=4, pady=4)
-            tk.Frame(card, width=9, background=time_of_day_color(when)).pack(side="left", fill="y")
+            if state == "failed":
+                rail_color = self.palette["bad"]
+            elif when <= now or state == "off":
+                rail_color = "#66717d" if self.cfg.get("gui_dark_mode", True) else "#1f2937"
+            else:
+                rail_color = time_of_day_color(when)
+            tk.Frame(card, width=9, background=rail_color).pack(side="left", fill="y")
             content = tk.Frame(card, background=background, padx=12, pady=8)
             content.pack(side="left", fill="both", expand=True)
             switch_palette = dict(self.palette, bg=background)
@@ -1223,21 +1288,56 @@ class ManagerApp:
             name_label = tk.Label(content, text=self._display_instance(str(row["label"])), background=background, foreground=self.palette["fg"], font=("Microsoft YaHei UI", 11, "bold"))
             name_label.grid(row=0, column=2, sticky="w", padx=(16, 8))
             source = "MAA 当前配置" if str(row.get("source", "")).startswith("maa_gui") else "备用配置"
-            source_label = tk.Label(content, text=f"{when:%m 月 %d 日} · {source}", background=background, foreground=self.palette["muted"], font=("Microsoft YaHei UI", 9))
+            note = str((row.get("override") or {}).get("note") or "").strip()
+            source_text = f"{when:%m 月 %d 日} · {source}"
+            if note:
+                source_text += f"\n备注：{note}"
+            source_label = tk.Label(
+                content,
+                text=source_text,
+                background=background,
+                foreground=self.palette["muted"],
+                font=("Microsoft YaHei UI", 9),
+                justify="left",
+                anchor="w",
+                wraplength=300 if compact else 460,
+            )
             source_label.grid(row=1, column=2, sticky="w", padx=(16, 8))
             status_color = self.palette["bad"] if state == "failed" else (self.palette["good"] if state == "next" else self.palette["muted"])
             status_label = tk.Label(content, text=status, background=background, foreground=status_color, font=("Microsoft YaHei UI", 10, "bold"))
             status_label.grid(row=0, column=3, sticky="e", padx=(8, 0))
-            detail_label = tk.Label(content, text=detail, background=background, foreground=self.palette["muted"], font=("Microsoft YaHei UI", 8))
+            detail_label = tk.Label(content, text=detail, background=background, foreground=self.palette["muted"], font=("Microsoft YaHei UI", 8), justify="right", wraplength=150 if compact else 220)
             detail_label.grid(row=1, column=3, sticky="e", padx=(8, 0))
-            content.columnconfigure(2, weight=1)
+            content.columnconfigure(2, weight=1, minsize=180 if compact else 260)
+            content.columnconfigure(3, minsize=130 if compact else 180)
             if not compact:
                 ttk.Button(content, text="修改时间", command=lambda item=row: self.move_occurrence(item)).grid(row=0, column=4, rowspan=2, padx=(12, 0))
             self._bind_card_action(
                 [card, content, time_label, name_label, source_label, status_label, detail_label],
                 lambda _event, item=row: self.move_occurrence(item),
             )
+            card._schedule_datetime = when
+            container._schedule_row_widgets.append(card)
         container.refresh_scrollregion()
+
+    def _schedule_rows_signature(self, rows: list[dict]) -> tuple:
+        now = datetime.now()
+        daily_cache: dict[date, dict] = {}
+        signature = []
+        for row in rows:
+            status, detail, state = self._schedule_card_state(row, now, daily_cache)
+            override = row.get("override") or {}
+            signature.append((
+                str(row.get("label", "")),
+                row["datetime"].isoformat(timespec="minutes"),
+                bool(row.get("skipped")),
+                str(override.get("id", "")),
+                str(override.get("note", "")),
+                status,
+                detail,
+                state,
+            ))
+        return tuple(signature)
 
     def set_occurrence_enabled(self, row: dict, enabled: bool) -> None:
         override = row.get("override") or {}
@@ -1280,54 +1380,174 @@ class ManagerApp:
 
         now = datetime.now()
         rows, _meta = effective_occurrences(BASE_DIR, self.cfg, now, now + timedelta(hours=36), include_skipped=True)
-        self._render_schedule_rows(self.next_schedule_cards, rows[:16], compact=True)
+        rows = rows[:16]
+        signature = self._schedule_rows_signature(rows)
+        if signature != self._dashboard_schedule_signature:
+            self._render_schedule_rows(self.next_schedule_cards, rows, compact=True)
+            self._dashboard_schedule_signature = signature
 
-    def refresh_schedule(self):
-        start_hour=int(self.cfg.get("operational_day_start_hour",4))
-        start=datetime.combine(self.schedule_day,datetime.min.time()).replace(hour=start_hour)
-        end=start+timedelta(days=1)
+    def refresh_schedule(self, force: bool = False):
+        start=datetime.combine(self.schedule_range_start,datetime.min.time())
+        end=datetime.combine(self.schedule_range_end + timedelta(days=1),datetime.min.time())
         self.schedule_day_var.set(self.schedule_day.isoformat())
-        self.schedule_window_var.set(f"{start:%m-%d %H:%M} → {end:%m-%d %H:%M}")
+        self.schedule_day_title_var.set(f"{self.schedule_day:%Y 年 %m 月 %d 日}")
+        self.schedule_window_var.set(f"已加载 {self.schedule_range_start:%m-%d} 至 {self.schedule_range_end:%m-%d}")
         self.schedule_rows, _meta = effective_occurrences(
             BASE_DIR, self.cfg, start, end, include_skipped=True
         )
         self.schedule_rows=[row for row in self.schedule_rows if start <= row["datetime"] < end]
-        self.schedule_calendar.set_date(self.schedule_day)
-        self._render_schedule_rows(self.schedule_cards, self.schedule_rows)
+        signature = (self.schedule_range_start, self.schedule_range_end, self._schedule_rows_signature(self.schedule_rows))
+        if force or signature != self._schedule_signature:
+            self._schedule_rendering = True
+            try:
+                self._render_schedule_rows(self.schedule_cards, self.schedule_rows)
+                self._schedule_signature = signature
+            finally:
+                self._schedule_rendering = False
+            self.root.after_idle(self._restore_schedule_position)
 
     def change_schedule_day(self,delta:int):
-        self.schedule_day += timedelta(days=delta); self.refresh_schedule()
+        self.set_schedule_day(self.schedule_day + timedelta(days=delta))
 
     def schedule_today(self):
-        self.schedule_day=operational_date(datetime.now(),int(self.cfg.get("operational_day_start_hour",4))); self.refresh_schedule()
+        self.set_schedule_day(datetime.now().date())
 
     def goto_schedule_day(self):
         try:
-            self.schedule_day=datetime.strptime(self.schedule_day_var.get().strip(),"%Y-%m-%d").date(); self.refresh_schedule()
+            self.set_schedule_day(datetime.strptime(self.schedule_day_var.get().strip(),"%Y-%m-%d").date())
         except ValueError:
             messagebox.showerror("日期格式错误","请输入 YYYY-MM-DD。",parent=self.root)
 
     def open_schedule_calendar(self):
-        self.calendar_visible = not self.calendar_visible
-        if self.calendar_visible:
-            try:
-                selected = datetime.strptime(self.schedule_day_var.get().strip(), "%Y-%m-%d").date()
-            except ValueError:
-                selected = self.schedule_day
-            self.schedule_calendar.set_date(selected)
-            self.schedule_calendar.pack(fill="x", padx=180, pady=(0, 8), before=self.schedule_intro)
-            self.calendar_toggle.configure(text="▲")
-        else:
-            self.schedule_calendar.pack_forget()
-            self.calendar_toggle.configure(text="▼")
+        if self.schedule_calendar_dialog is None or not self.schedule_calendar_dialog.winfo_exists():
+            dialog = tk.Toplevel(self.root)
+            dialog.withdraw()
+            dialog.title("选择日程日期")
+            dialog.transient(self.root)
+            dialog.resizable(False, False)
+            dialog.configure(background=self.palette["bg"])
+            dialog.protocol("WM_DELETE_WINDOW", self.close_schedule_calendar)
+            dialog.bind("<Escape>", lambda _event: self.close_schedule_calendar())
+            body = ttk.Frame(dialog, padding=20)
+            body.pack(fill="both", expand=True)
+            ttk.Label(body, text="选择要查看的日期", style="DateTitle.TLabel").pack(pady=(0, 12))
+            self.schedule_calendar = InlineCalendar(body, self.schedule_day, self.set_schedule_day, self.palette)
+            self.schedule_calendar.pack(fill="both", expand=True)
+            footer = ttk.Frame(body)
+            footer.pack(fill="x", pady=(14, 0))
+            ttk.Button(footer, text="回到今天", command=self.schedule_today).pack(side="left")
+            ttk.Button(footer, text="取消", command=self.close_schedule_calendar).pack(side="right")
+            self.schedule_calendar_dialog = dialog
+        try:
+            selected = datetime.strptime(self.schedule_day_var.get().strip(), "%Y-%m-%d").date()
+        except ValueError:
+            selected = self.schedule_day
+        self.schedule_calendar.set_date(selected)
+        dialog = self.schedule_calendar_dialog
+        dialog.update_idletasks()
+        width, height = 440, 430
+        x = self.root.winfo_rootx() + max(0, (self.root.winfo_width() - width) // 2)
+        y = self.root.winfo_rooty() + max(0, (self.root.winfo_height() - height) // 2)
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
+        dialog.deiconify()
+        dialog.lift()
+        dialog.grab_set()
+
+    def close_schedule_calendar(self):
+        if self.schedule_calendar_dialog is None:
+            return
+        try:
+            self.schedule_calendar_dialog.grab_release()
+            self.schedule_calendar_dialog.withdraw()
+        except tk.TclError:
+            pass
 
     def set_schedule_day(self, selected: date):
         self.schedule_day = selected
-        if self.calendar_visible:
-            self.calendar_visible = False
-            self.schedule_calendar.pack_forget()
-            self.calendar_toggle.configure(text="▼")
-        self.refresh_schedule()
+        self.schedule_range_start = selected - timedelta(days=1)
+        self.schedule_range_end = selected + timedelta(days=1)
+        self._schedule_signature = None
+        self._schedule_initial_position_pending = True
+        self._schedule_restore_day = None
+        self.close_schedule_calendar()
+        self.refresh_schedule(force=True)
+
+    def _restore_schedule_position(self) -> None:
+        """Put the selected/current time near the middle without rebuilding again."""
+        canvas = self.schedule_cards.canvas
+        canvas.update_idletasks()
+        total = max(1, self.schedule_cards.body.winfo_reqheight())
+        viewport = max(1, canvas.winfo_height())
+        day_to_restore = self._schedule_restore_day
+        self._schedule_restore_day = None
+        self._schedule_restoring = True
+        if day_to_restore is not None:
+            for widget in getattr(self.schedule_cards, "_schedule_day_widgets", []):
+                if getattr(widget, "_schedule_day", None) == day_to_restore:
+                    canvas.yview_moveto(max(0.0, min(1.0, widget.winfo_y() / total)))
+                    self._schedule_initial_position_pending = False
+                    self.root.after_idle(lambda: setattr(self, "_schedule_restoring", False))
+                    return
+
+        target = datetime.now()
+        if not (self.schedule_range_start <= target.date() <= self.schedule_range_end):
+            target = datetime.combine(self.schedule_day, datetime.min.time()).replace(hour=12)
+        cards = getattr(self.schedule_cards, "_schedule_row_widgets", [])
+        if cards:
+            card = min(cards, key=lambda item: abs((item._schedule_datetime - target).total_seconds()))
+            y = card.winfo_y() - max(0, (viewport - card.winfo_height()) // 2)
+            canvas.yview_moveto(max(0.0, min(1.0, y / total)))
+        self._schedule_initial_position_pending = False
+        self.root.after_idle(lambda: setattr(self, "_schedule_restoring", False))
+
+    def _on_schedule_view_change(self, first: float, last: float) -> None:
+        if self._schedule_rendering or self._schedule_restoring:
+            return
+        try:
+            top = self.schedule_cards.canvas.canvasy(0) + 28
+            headers = getattr(self.schedule_cards, "_schedule_day_widgets", [])
+            visible = None
+            for widget in headers:
+                if widget.winfo_y() <= top:
+                    visible = widget._schedule_day
+                elif visible is None:
+                    visible = widget._schedule_day
+                    break
+            if visible is not None:
+                self.schedule_day = visible
+                self.schedule_day_var.set(visible.isoformat())
+                self.schedule_day_title_var.set(f"{visible:%Y 年 %m 月 %d 日}")
+        except (AttributeError, tk.TclError):
+            return
+
+        if self._schedule_initial_position_pending or self._schedule_extend_pending:
+            return
+        if not self.schedule_cards._content_overflows():
+            return
+        direction = -1 if first <= 0.015 else (1 if last >= 0.985 else 0)
+        if direction:
+            self._schedule_extend_pending = True
+            self.root.after_idle(lambda step=direction: self._extend_schedule_window(step))
+
+    def _extend_schedule_window(self, direction: int) -> None:
+        self._schedule_extend_pending = False
+        if self._schedule_rendering:
+            return
+        visible = self.schedule_day
+        if direction < 0:
+            self.schedule_range_start -= timedelta(days=1)
+        else:
+            self.schedule_range_end += timedelta(days=1)
+        # Keep at most five calendar days alive.  Reaching an edge loads one
+        # more day and retires the farthest day, so long browsing stays cheap.
+        while (self.schedule_range_end - self.schedule_range_start).days + 1 > 5:
+            if direction < 0:
+                self.schedule_range_end -= timedelta(days=1)
+            else:
+                self.schedule_range_start += timedelta(days=1)
+        self._schedule_restore_day = visible
+        self._schedule_signature = None
+        self.refresh_schedule(force=True)
 
     def toggle_occurrence(self, row: dict | None = None):
         row=row or self._selected_schedule()
@@ -1341,6 +1561,8 @@ class ManagerApp:
     def toggle_all_occurrences(self, enabled: bool):
         changed = 0
         for row in self.schedule_rows:
+            if row["datetime"].date() != self.schedule_day:
+                continue
             override = row.get("override") or {}
             if enabled and override.get("action") == "skip":
                 changed += len(remove_override(BASE_DIR, self.cfg, override_id=override.get("id")))
@@ -1519,7 +1741,8 @@ class ManagerApp:
     def show_resource_detail(self, row: dict):
         window = tk.Toplevel(self.root)
         window.title("资源采样详细分析")
-        window.geometry("900x650")
+        window.geometry("920x680")
+        window.minsize(760, 560)
         window.configure(background=self.palette["bg"])
         try:
             window.iconbitmap(default=str(ICON_ICO))
@@ -1528,28 +1751,51 @@ class ManagerApp:
         when=datetime.fromtimestamp(float(row.get("epoch",0)))
         used,available,total=memory_values(row)
         reasons="；".join(row.get("abnormal_reasons") or []) or "该点未达到异常阈值"
-        summary=(f"时间：{when:%Y-%m-%d %H:%M:%S}\n"
-                 f"判断：{reasons}\n"
-                 f"系统内存：{row.get('ram',0):.0f}% · 已用 {used/1024:.2f} GB · 可用 {available/1024:.2f} GB · 总计 {total/1024:.2f} GB\n"
-                 f"Agent：{row.get('agent_mb',0)/1024:.2f} GB · MAA：{row.get('maa_mb',0)/1024:.2f} GB（{row.get('maa_count',0)}/{row.get('expected_maa_count','?')}） · MuMu：{row.get('mumu_mb',0)/1024:.2f} GB（{row.get('mumu_count',0)} 个进程）")
-        ttk.Label(window,text=summary,justify="left",wraplength=850,style="Heading.TLabel",padding=14).pack(fill="x")
+        detail = ScrollableFrame(window, palette=self.palette)
+        detail.pack(fill="both", expand=True, padx=14, pady=14)
+        heading = tk.Frame(detail.body, background=self.palette["panel"], padx=16, pady=14, highlightthickness=1, highlightbackground=self.palette["grid"])
+        heading.pack(fill="x", pady=(0, 10))
+        tk.Label(heading, text=f"{when:%Y 年 %m 月 %d 日  %H:%M:%S}", background=self.palette["panel"], foreground=self.palette["fg"], font=("Microsoft YaHei UI", 16, "bold")).pack(anchor="w")
+        tk.Label(heading, text=reasons, background=self.palette["panel"], foreground=self.palette["bad"] if row.get("abnormal") else self.palette["muted"], font=("Microsoft YaHei UI", 10), justify="left", wraplength=820).pack(anchor="w", pady=(6, 0))
+
+        metrics = ttk.Frame(detail.body)
+        metrics.pack(fill="x", pady=(0, 10))
+        for column in range(4):
+            metrics.columnconfigure(column, weight=1)
+        metric_rows = (
+            ("系统内存", f"{row.get('ram',0):.0f}%", f"已用 {used/1024:.2f} / {total/1024:.2f} GB"),
+            ("Agent", f"{row.get('agent_mb',0)/1024:.2f} GB", "管理器监控进程"),
+            ("MAA", f"{row.get('maa_mb',0)/1024:.2f} GB", f"{row.get('maa_count',0)}/{row.get('expected_maa_count','?')} 个实例"),
+            ("MuMu", f"{row.get('mumu_mb',0)/1024:.2f} GB", f"{row.get('mumu_count',0)} 个进程"),
+        )
+        for column, (title, value, caption) in enumerate(metric_rows):
+            card = tk.Frame(metrics, background=self.palette["panel"], padx=12, pady=10, highlightthickness=1, highlightbackground=self.palette["grid"])
+            card.grid(row=0, column=column, sticky="nsew", padx=(0 if column == 0 else 5, 0))
+            tk.Label(card, text=title, background=self.palette["panel"], foreground=self.palette["muted"], font=("Microsoft YaHei UI", 9)).pack(anchor="w")
+            tk.Label(card, text=value, background=self.palette["panel"], foreground=self.palette["fg"], font=("Segoe UI", 15, "bold")).pack(anchor="w", pady=(3, 1))
+            tk.Label(card, text=caption, background=self.palette["panel"], foreground=self.palette["muted"], font=("Microsoft YaHei UI", 8)).pack(anchor="w")
+
+        def add_memory_card(parent, title: str, subtitle: str, memory_mb: float):
+            card = tk.Frame(parent, background=self.palette["panel"], padx=13, pady=9, highlightthickness=1, highlightbackground=self.palette["grid"])
+            card.pack(fill="x", pady=3)
+            tk.Label(card, text=f"{memory_mb/1024:.2f} GB", background=self.palette["panel"], foreground=self.palette["ram"], font=("Segoe UI", 11, "bold")).pack(side="right", padx=(12, 0))
+            text = tk.Frame(card, background=self.palette["panel"])
+            text.pack(side="left", fill="x", expand=True)
+            tk.Label(text, text=title, background=self.palette["panel"], foreground=self.palette["fg"], font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w")
+            tk.Label(text, text=subtitle, background=self.palette["panel"], foreground=self.palette["muted"], font=("Microsoft YaHei UI", 8)).pack(anchor="w", pady=(2, 0))
+
         apps=row.get("top_apps") or []
         if apps:
-            app_frame=ttk.LabelFrame(window,text="按应用归并的内存大户",padding=8); app_frame.pack(fill="x",padx=14,pady=(0,10))
-            app_tree=ttk.Treeview(app_frame,columns=("name","category","count","memory"),show="headings",height=min(8,len(apps)))
-            for key,title,width in (("name","应用",280),("category","分类",130),("count","进程数",90),("memory","合计内存",150)):
-                app_tree.heading(key,text=title); app_tree.column(key,width=width,anchor="w")
+            app_frame=ttk.LabelFrame(detail.body,text="按应用归并的内存大户",padding=8); app_frame.pack(fill="x",pady=(0,10))
             for item in apps:
-                app_tree.insert("","end",values=(item.get("name"),item.get("category"),item.get("count",1),f"{item.get('mb',0)/1024:.2f} GB"))
-            app_tree.pack(fill="x")
+                add_memory_card(app_frame, str(item.get("name") or "未知应用"), f"{item.get('category') or '未分类'} · {item.get('count',1)} 个进程", float(item.get("mb", 0)))
         processes=row.get("top_processes") or []
-        proc_frame=ttk.LabelFrame(window,text="异常发生时的单进程快照",padding=8); proc_frame.pack(fill="both",expand=True,padx=14,pady=(0,14))
-        proc_tree=ttk.Treeview(proc_frame,columns=("name","pid","category","memory"),show="headings")
-        for key,title,width in (("name","进程",330),("pid","PID",90),("category","分类",140),("memory","内存",150)):
-            proc_tree.heading(key,text=title); proc_tree.column(key,width=width,anchor="w")
+        proc_frame=ttk.LabelFrame(detail.body,text="异常发生时的单进程快照",padding=8); proc_frame.pack(fill="both",expand=True)
+        if not processes:
+            ttk.Label(proc_frame, text="这个采样点没有保存单进程明细。", style="Muted.TLabel", padding=10).pack(fill="x")
         for item in processes:
-            proc_tree.insert("","end",values=(item.get("name"),item.get("pid","—"),item.get("category","—"),f"{item.get('mb',0)/1024:.2f} GB"))
-        proc_tree.pack(fill="both",expand=True)
+            add_memory_card(proc_frame, str(item.get("name") or "未知进程"), f"PID {item.get('pid','—')} · {item.get('category') or '未分类'}", float(item.get("mb", 0)))
+        detail.refresh_scrollregion()
 
     def load_settings(self):
         self.start_with_windows_var.set(startup_shortcut_path().exists() or startup_marker_path().exists())
@@ -1627,7 +1873,9 @@ class ManagerApp:
             messagebox.showerror("保存失败",str(exc),parent=self.root); return
         if old_dark != self.cfg["gui_dark_mode"]:
             self._apply_runtime_theme()
-            self.refresh_dashboard(); self.refresh_schedule(); self.refresh_resources()
+            self._dashboard_schedule_signature = None
+            self._schedule_signature = None
+            self.refresh_dashboard(); self.refresh_schedule(force=True); self.refresh_resources()
         self.config_dirty=False; self.populate_config(); self._set_footer("设置已保存；Agent 下一轮自动读取。")
 
     def install_shortcuts(self):
@@ -1777,23 +2025,33 @@ class ManagerApp:
         self.populate_config()
         self.load_timing()
         self.load_settings()
-        self.refresh_schedule()
+        self._dashboard_schedule_signature = None
+        self._schedule_signature = None
+        self.refresh_dashboard()
+        self.refresh_schedule(force=True)
         self._set_footer("已重新读取 config.json。")
 
     def refresh_logs(self):
         self._set_text(self.log_text, filter_log_text(tail_text(LOG_DIR / self.log_choice.get()),self.full_log_mode.get()))
         self.log_text.see("end")
 
-    def refresh_all(self):
+    def refresh_all(self, full: bool = False):
         try:
             if not self.config_dirty:
                 self.cfg = load_config()
             self.refresh_dashboard()
-            self.refresh_schedule()
-            self.refresh_resources()
-            self.load_timing()
-            self.load_settings()
-            self.populate_config()
+            try:
+                selected_tab = self.notebook.nametowidget(self.notebook.select())
+            except Exception:
+                selected_tab = None
+            if full or selected_tab is self.schedule_tab:
+                self.refresh_schedule()
+            if full or selected_tab is self.resource_tab:
+                self.refresh_resources()
+            if full:
+                self.load_timing()
+                self.load_settings()
+                self.populate_config()
             self.refresh_diagnostic_status()
             if self.auto_log_var.get():
                 self.refresh_logs()

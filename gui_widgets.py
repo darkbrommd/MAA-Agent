@@ -199,12 +199,15 @@ class ScrollableFrame(ttk.Frame):
     the widget; a wheel binding that existed before is restored on leave.
     """
 
-    def __init__(self, master: tk.Misc, palette: dict | None = None, **kwargs):
+    def __init__(self, master: tk.Misc, palette: dict | None = None,
+                 on_view_change: Callable[[float, float], None] | None = None,
+                 **kwargs):
         self.palette = coerce_palette(palette)
+        self.on_view_change = on_view_change
         super().__init__(master, **kwargs)
         self.canvas = tk.Canvas(self, background=self.palette["bg"], highlightthickness=0, bd=0)
         self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
-        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        self.canvas.configure(yscrollcommand=self._on_yview_changed)
         self.canvas.grid(row=0, column=0, sticky="nsew")
         self.scrollbar.grid(row=0, column=1, sticky="ns")
         self.columnconfigure(0, weight=1)
@@ -238,6 +241,16 @@ class ScrollableFrame(ttk.Frame):
     def set_palette(self, palette: dict) -> None:
         self.palette = coerce_palette(palette)
         self.canvas.configure(background=self.palette["bg"])
+
+    def _on_yview_changed(self, first: str, last: str) -> None:
+        """Keep the scrollbar and an optional sticky-header observer in sync."""
+        self.scrollbar.set(first, last)
+        if self.on_view_change is None:
+            return
+        try:
+            self.on_view_change(float(first), float(last))
+        except (TypeError, ValueError, tk.TclError):
+            pass
 
     # -- geometry -----------------------------------------------------------
     def _on_body_configure(self, event) -> None:

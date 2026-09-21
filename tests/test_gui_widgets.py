@@ -208,6 +208,21 @@ class ScrollableFrameTests(TkWidgetTestCase):
         frame.set_palette(LIGHT)
         self.assertEqual(frame.canvas.cget("background"), LIGHT["bg"])
 
+    def test_view_change_callback_tracks_canvas_scroll(self):
+        calls = []
+        frame = gui_widgets.ScrollableFrame(
+            self.root,
+            palette=DARK,
+            on_view_change=lambda first, last: calls.append((first, last)),
+        )
+        frame.pack(fill="both", expand=True)
+        self.fill_body(frame)
+        frame.canvas.yview_moveto(0.5)
+        self.settle()
+        self.assertTrue(calls)
+        self.assertGreaterEqual(calls[-1][0], 0.0)
+        self.assertLessEqual(calls[-1][1], 1.0)
+
     def test_inner_window_width_matches_canvas(self):
         frame = self.make_scrollable()
         self.fill_body(frame, count=3)
