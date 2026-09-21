@@ -48,6 +48,9 @@
   "operational_day_start_hour": 4,
   "monitor_disk_paths": ["C:\\", "D:\\"],
   "enable_news_monitor": true,
+  "news_cache_limit": 50,
+  "news_initial_fetch_count": 20,
+  "news_content_fetch_limit": 20,
   "news_check_times": ["00:05", "12:05"],
   "news_keywords": ["闪断更新", "停机维护"],
   "news_maintenance_action": "supervision_only",
@@ -57,4 +60,3 @@
   "launch_paths": {"MAA1": "", "MAA2": "", "MuMu": ""},
   "auto_start_apps_with_agent": {"MAA1": false, "MAA2": false, "MuMu": false}
 }
-

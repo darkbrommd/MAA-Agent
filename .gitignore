@@ -1,5 +1,6 @@
 # Machine-local runtime and secrets
 config.json
+config.json.bak
 .venv/
 __pycache__/
 *.py[cod]

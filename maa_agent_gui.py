@@ -9,6 +9,7 @@ configuration and logs. Normal minimize stays on the taskbar; the explicit
 from __future__ import annotations
 
 import json
+import calendar
 import locale
 import os
 import re
@@ -29,6 +30,7 @@ import psutil
 from agent_runtime import AgentMutex, find_running_agents, request_stop, validated_agent_for_dir
 from schedule_utils import add_override, effective_occurrences, remove_override
 from diagnostic_commands import enqueue as enqueue_diagnostic
+from news_monitor import load_news_cache, refresh_news_cache
 from resource_history import load_calendar_day as load_resource_calendar_day, memory_values, operational_date
 
 
@@ -146,6 +148,90 @@ def filter_log_text(text: str, mode: str) -> str:
     return "\n".join(lines[-300:]) if lines else "（最近没有事故、异常或恢复记录）"
 
 
+class MetricBar(tk.Canvas):
+    """Small coloured progress bar with its value drawn inside the bar."""
+
+    def __init__(self, master, *, palette: dict, fill: str, **kwargs):
+        self.palette = palette
+        self.fill = fill
+        self.value = 0.0
+        self.label = ""
+        super().__init__(master, height=24, highlightthickness=0, **kwargs)
+        self.bind("<Configure>", lambda _event: self.redraw())
+
+    def set_palette(self, palette: dict):
+        self.palette = palette
+        self.redraw()
+
+    def set_value(self, value: float, label: str):
+        self.value = max(0.0, min(100.0, float(value)))
+        self.label = label
+        self.redraw()
+
+    def redraw(self):
+        width = max(20, self.winfo_width())
+        height = max(18, self.winfo_height())
+        self.delete("all")
+        self.configure(background=self.palette["field"])
+        self.create_rectangle(0, 0, width, height, fill=self.palette["field"], outline="")
+        self.create_rectangle(0, 0, width * self.value / 100, height, fill=self.fill, outline="")
+        self.create_text(width / 2, height / 2, text=self.label, fill="#ffffff", font=("Microsoft YaHei UI", 9, "bold"))
+
+
+class CalendarPopup(tk.Toplevel):
+    """Dependency-free month calendar used by the schedule date field."""
+
+    def __init__(self, master, selected: date, callback, palette: dict):
+        super().__init__(master)
+        self.withdraw()
+        self.transient(master)
+        self.resizable(False, False)
+        self.title("选择日期")
+        self.callback = callback
+        self.palette = palette
+        self.year, self.month = selected.year, selected.month
+        self.body = ttk.Frame(self, padding=10)
+        self.body.pack(fill="both", expand=True)
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self._draw()
+        self.update_idletasks()
+        x = master.winfo_rootx() + max(20, (master.winfo_width() - self.winfo_width()) // 2)
+        y = master.winfo_rooty() + 80
+        self.geometry(f"+{x}+{y}")
+        self.deiconify()
+        self.grab_set()
+        self.focus_force()
+
+    def _change_month(self, delta: int):
+        index = self.year * 12 + self.month - 1 + delta
+        self.year, zero_month = divmod(index, 12)
+        self.month = zero_month + 1
+        self._draw()
+
+    def _pick(self, day: int):
+        self.callback(date(self.year, self.month, day))
+        self.destroy()
+
+    def _draw(self):
+        for child in self.body.winfo_children():
+            child.destroy()
+        header = ttk.Frame(self.body)
+        header.grid(row=0, column=0, columnspan=7, sticky="ew", pady=(0, 7))
+        ttk.Button(header, text="‹", width=3, command=lambda: self._change_month(-1)).pack(side="left")
+        ttk.Label(header, text=f"{self.year} 年 {self.month} 月", style="Heading.TLabel").pack(side="left", expand=True)
+        ttk.Button(header, text="›", width=3, command=lambda: self._change_month(1)).pack(side="right")
+        for column, title in enumerate(("一", "二", "三", "四", "五", "六", "日")):
+            ttk.Label(self.body, text=title, anchor="center", width=4).grid(row=1, column=column, padx=1, pady=1)
+        for row_index, week in enumerate(calendar.monthcalendar(self.year, self.month), start=2):
+            for column, day in enumerate(week):
+                if day:
+                    ttk.Button(self.body, text=str(day), width=4, command=lambda value=day: self._pick(value)).grid(
+                        row=row_index, column=column, padx=1, pady=1
+                    )
+                else:
+                    ttk.Label(self.body, text="", width=4).grid(row=row_index, column=column)
+
+
 class ResourceChart(tk.Canvas):
     def __init__(self, master, *, palette=None, on_open=None, **kwargs):
         self.palette = palette or PALETTES["dark"]
@@ -156,6 +242,9 @@ class ResourceChart(tk.Canvas):
         self.on_open = on_open
         self.tooltip_bg = self.create_rectangle(0, 0, 0, 0, fill=self.palette["tooltip"], outline=self.palette["accent"], state="hidden")
         self.tooltip = self.create_text(0, 0, text="", fill=self.palette["fg"], anchor="nw", state="hidden", font=("Microsoft YaHei UI", 9))
+        self.cursor_line = self.create_line(0, 0, 0, 0, fill=self.palette["accent"], dash=(3, 3), width=1, state="hidden")
+        self.cursor_dot = self.create_oval(0, 0, 0, 0, fill=self.palette["accent"], outline=self.palette["fg"], width=1, state="hidden")
+        self.plot_bounds = (48, 32, 382, 186)
         self.bind("<Configure>", lambda _e: self.redraw())
         self.bind("<Motion>", self._motion)
         self.bind("<Leave>", lambda _e: self._hide_tooltip())
@@ -166,6 +255,8 @@ class ResourceChart(tk.Canvas):
         self.configure(background=palette["panel"])
         self.itemconfigure(self.tooltip_bg, fill=palette["tooltip"], outline=palette["accent"])
         self.itemconfigure(self.tooltip, fill=palette["fg"])
+        self.itemconfigure(self.cursor_line, fill=palette["accent"])
+        self.itemconfigure(self.cursor_dot, fill=palette["accent"], outline=palette["fg"])
         self.redraw()
 
     def set_data(self, rows: list[dict], day: date, threshold: float = 88):
@@ -181,19 +272,22 @@ class ResourceChart(tk.Canvas):
     def _hide_tooltip(self):
         self.itemconfigure(self.tooltip, state="hidden")
         self.itemconfigure(self.tooltip_bg, state="hidden")
+        self.itemconfigure(self.cursor_line, state="hidden")
+        self.itemconfigure(self.cursor_dot, state="hidden")
 
     def _nearest(self, x: float):
         if not self.rows:
             return None
-        width = max(400, self.winfo_width()); left, right = 48, width - 18
+        width = max(280, self.winfo_width()); left, right = 48, width - 18
         start, end = self._window()
         target = start + max(0, min(1, (x - left) / max(1, right - left))) * (end - start)
         return min(self.rows, key=lambda item: abs(float(item.get("epoch", 0)) - target))
 
     def redraw(self):
         self.delete("chart")
-        width = max(400, self.winfo_width()); height = max(220, self.winfo_height())
-        left, top, right, bottom = 48, 20, width - 18, height - 34
+        width = max(280, self.winfo_width()); height = max(120, self.winfo_height())
+        left, top, right, bottom = 48, 34, width - 18, height - 34
+        self.plot_bounds = (left, top, right, bottom)
         for pct in range(0, 101, 25):
             y = bottom - (bottom - top) * pct / 100
             self.create_line(left, y, right, y, fill=self.palette["grid"], tags="chart")
@@ -204,7 +298,7 @@ class ResourceChart(tk.Canvas):
             self.create_text(x, bottom + 16, text=f"{hour:02d}:00", fill=self.palette["muted"], tags="chart", font=("Segoe UI", 8))
         threshold_y = bottom - (bottom - top) * max(0, min(100, self.threshold)) / 100
         self.create_line(left, threshold_y, right, threshold_y, fill=self.palette["warning"], dash=(5, 4), tags="chart")
-        self.create_text(right - 4, threshold_y - 4, text=f"压力阈值 {self.threshold:.0f}%", fill=self.palette["warning"], anchor="se", tags="chart", font=("Microsoft YaHei UI", 8))
+        self.create_text(left + 5, threshold_y - 4, text=f"压力阈值 {self.threshold:.0f}%", fill=self.palette["warning"], anchor="sw", tags="chart", font=("Microsoft YaHei UI", 8))
         if not self.rows:
             self.create_text(width / 2, height / 2, text="这一天还没有采样数据", fill=self.palette["muted"], tags="chart", font=("Microsoft YaHei UI", 11))
             return
@@ -226,15 +320,24 @@ class ResourceChart(tk.Canvas):
             x = left + (right-left) * max(0, min(1, (float(row.get("epoch", start))-start)/(end-start)))
             y = bottom - (bottom-top) * max(0, min(100, float(row.get("ram", 0)))) / 100
             self.create_oval(x-5, y-5, x+5, y+5, fill=self.palette["warning"], outline=self.palette["fg"], width=1, tags="chart")
-        self.create_text(right-150, top, text="内存", fill=self.palette["ram"], anchor="w", tags="chart")
-        self.create_text(right-88, top, text=f"异常点 {abnormal_count}", fill=self.palette["warning"], anchor="w", tags="chart")
+        self.create_text(left, 12, text="内存", fill=self.palette["ram"], anchor="w", tags="chart")
+        self.create_text(left + 62, 12, text=f"异常点 {abnormal_count}", fill=self.palette["warning"], anchor="w", tags="chart")
+        self.tag_raise(self.cursor_line); self.tag_raise(self.cursor_dot)
         self.tag_raise(self.tooltip_bg); self.tag_raise(self.tooltip)
 
     def _motion(self, event):
         row = self._nearest(event.x)
         if not row:
             return
-        width=max(400,self.winfo_width()); height=max(220,self.winfo_height())
+        width=max(280,self.winfo_width()); height=max(120,self.winfo_height())
+        left, chart_top, right, chart_bottom = self.plot_bounds
+        start, end = self._window()
+        marker_x = left + (right-left) * max(0, min(1, (float(row.get("epoch", start))-start)/(end-start)))
+        marker_y = chart_bottom - (chart_bottom-chart_top) * max(0, min(100, float(row.get("ram", 0)))) / 100
+        self.coords(self.cursor_line, marker_x, chart_top, marker_x, chart_bottom)
+        self.coords(self.cursor_dot, marker_x-5, marker_y-5, marker_x+5, marker_y+5)
+        self.itemconfigure(self.cursor_line, state="normal")
+        self.itemconfigure(self.cursor_dot, state="normal")
         dt=datetime.fromtimestamp(float(row.get("epoch",0)))
         used, available, _total = memory_values(row)
         top=row.get("top_apps") or row.get("top_processes") or []
@@ -253,6 +356,7 @@ class ResourceChart(tk.Canvas):
             self.move(self.tooltip, dx, dy); x1, y1, x2, y2 = self.bbox(self.tooltip)
             self.coords(self.tooltip_bg, x1-7, y1-5, x2+7, y2+5)
             self.itemconfigure(self.tooltip_bg,state="normal")
+            self.tag_raise(self.cursor_line); self.tag_raise(self.cursor_dot)
             self.tag_raise(self.tooltip_bg); self.tag_raise(self.tooltip)
 
     def _open_nearest(self, event):
@@ -408,8 +512,14 @@ class ManagerApp:
         style.configure("TCheckbutton", background=palette["bg"], foreground=palette["fg"])
         style.configure("TRadiobutton", background=palette["bg"], foreground=palette["fg"])
         style.configure("TNotebook", background=palette["bg"], borderwidth=0)
-        style.configure("TNotebook.Tab", background=palette["field"], foreground=palette["muted"], padding=(14, 7))
-        style.map("TNotebook.Tab", background=[("selected", palette["panel"])], foreground=[("selected", palette["fg"])])
+        style.configure("TNotebook.Tab", background=palette["field"], foreground=palette["muted"], padding=(14, 8))
+        style.map(
+            "TNotebook.Tab",
+            background=[("selected", palette["panel"])],
+            foreground=[("selected", palette["fg"])],
+            padding=[("selected", (14, 8)), ("!selected", (14, 8))],
+            expand=[("selected", (0, 0, 0, 0))],
+        )
         style.configure("Treeview", background=palette["panel"], fieldbackground=palette["panel"], foreground=palette["fg"], rowheight=28)
         style.configure("Treeview.Heading", background=palette["field"], foreground=palette["fg"])
         style.map("Treeview", background=[("selected", palette["accent"])], foreground=[("selected", "#ffffff")])
@@ -454,6 +564,7 @@ class ManagerApp:
         self.schedule_tab = ttk.Frame(self.notebook, padding=14)
         self.timing_tab = ttk.Frame(self.notebook, padding=14)
         self.resource_tab = ttk.Frame(self.notebook, padding=14)
+        self.news_tab = ttk.Frame(self.notebook, padding=14)
         self.settings_tab = ttk.Frame(self.notebook, padding=14)
         self.diagnostics_tab = ttk.Frame(self.notebook, padding=14)
         self.config_tab = ttk.Frame(self.notebook, padding=14)
@@ -461,6 +572,7 @@ class ManagerApp:
         self.notebook.add(self.dashboard, text=" 运行状态 ")
         self.notebook.add(self.schedule_tab, text=" 日程时间轴 ")
         self.notebook.add(self.resource_tab, text=" 资源历史 ")
+        self.notebook.add(self.news_tab, text=" 官网公告 ")
         self.notebook.add(self.diagnostics_tab, text=" 报警演习 ")
         self.notebook.add(self.timing_tab, text=" 高级时间策略 ")
         self.notebook.add(self.config_tab, text=" 全部配置 ")
@@ -470,6 +582,7 @@ class ManagerApp:
         self._build_dashboard()
         self._build_schedule()
         self._build_resources()
+        self._build_news()
         self._build_settings()
         self._build_diagnostics()
         self._build_timing()
@@ -521,9 +634,9 @@ class ManagerApp:
             frame.grid(row=0, column=col, sticky="nsew", padx=(0 if col == 0 else 6, 0))
             ttk.Label(frame, textvariable=self.card_vars[name], justify="left").pack(anchor="w")
             if name == "资源":
-                self.cpu_progress = ttk.Progressbar(frame, maximum=100, mode="determinate")
+                self.cpu_progress = MetricBar(frame, palette=self.palette, fill="#3182ce")
                 self.cpu_progress.pack(fill="x", pady=(9, 2))
-                self.memory_progress = ttk.Progressbar(frame, maximum=100, mode="determinate")
+                self.memory_progress = MetricBar(frame, palette=self.palette, fill="#d84a68")
                 self.memory_progress.pack(fill="x", pady=2)
 
         info = ttk.Panedwindow(self.dashboard, orient="horizontal")
@@ -540,13 +653,19 @@ class ManagerApp:
         self.dashboard_log_mode = tk.StringVar(value="仅事故与恢复")
         ttk.Combobox(activity_bar, textvariable=self.dashboard_log_mode, values=("仅事故与恢复", "完整日志"), state="readonly", width=16).pack(side="left", padx=6)
         self.activity_expanded = True
-        self.activity_toggle = ttk.Button(activity_bar, text="折叠", command=self.toggle_dashboard_activity)
+        self.activity_toggle = ttk.Button(activity_bar, text="隐藏图表", width=9, command=self.toggle_dashboard_activity)
         self.activity_toggle.pack(side="right")
         self.dashboard_log_mode.trace_add("write", lambda *_: self.refresh_dashboard())
-        self.dashboard_resource_chart = ResourceChart(activity_frame, palette=self.palette, height=125, on_open=self.show_resource_detail)
-        self.dashboard_resource_chart.pack(fill="x", pady=(0, 6))
-        self.recent_log = tk.Text(activity_frame, height=8, wrap="word", state="disabled", font=("Consolas", 9))
+        self.activity_panes = ttk.Panedwindow(activity_frame, orient="vertical")
+        self.activity_panes.pack(fill="both", expand=True)
+        self.dashboard_chart_frame = ttk.Frame(self.activity_panes)
+        self.dashboard_log_frame = ttk.Frame(self.activity_panes)
+        self.dashboard_resource_chart = ResourceChart(self.dashboard_chart_frame, palette=self.palette, height=150, on_open=self.show_resource_detail)
+        self.dashboard_resource_chart.pack(fill="both", expand=True)
+        self.recent_log = tk.Text(self.dashboard_log_frame, height=8, wrap="word", state="disabled", font=("Consolas", 9))
         self.recent_log.pack(fill="both", expand=True)
+        self.activity_panes.add(self.dashboard_chart_frame, weight=1)
+        self.activity_panes.add(self.dashboard_log_frame, weight=2)
 
     def _build_schedule(self):
         nav = ttk.Frame(self.schedule_tab)
@@ -555,13 +674,11 @@ class ManagerApp:
         ttk.Button(nav, text="今天", command=self.schedule_today).pack(side="left", padx=5)
         ttk.Button(nav, text="后一天 ›", command=lambda: self.change_schedule_day(1)).pack(side="left")
         self.schedule_day_var = tk.StringVar()
-        today = datetime.now().date()
-        choices = [(today + timedelta(days=offset)).isoformat() for offset in range(-14, 31)]
-        self.schedule_day_combo = ttk.Combobox(nav, textvariable=self.schedule_day_var, values=choices, width=12)
-        self.schedule_day_combo.pack(side="left", padx=(18, 4))
-        self.schedule_day_combo.bind("<Return>", lambda _event: self.goto_schedule_day())
-        self.schedule_day_combo.bind("<<ComboboxSelected>>", lambda _event: self.goto_schedule_day())
-        ttk.Button(nav, text="→", width=3, command=self.goto_schedule_day).pack(side="left")
+        self.schedule_day_entry = ttk.Entry(nav, textvariable=self.schedule_day_var, width=12)
+        self.schedule_day_entry.pack(side="left", padx=(18, 4))
+        self.schedule_day_entry.bind("<Return>", lambda _event: self.goto_schedule_day())
+        ttk.Button(nav, text="日历", width=6, command=self.open_schedule_calendar).pack(side="left")
+        ttk.Button(nav, text="→", width=3, command=self.goto_schedule_day).pack(side="left", padx=(4, 0))
         self.schedule_window_var = tk.StringVar()
         ttk.Label(nav, textvariable=self.schedule_window_var, style="Heading.TLabel").pack(side="right")
         intro = "开关控制的是“本管理器是否监督这一次运行”，不会热改 MAA。04:00 是统计日边界，边界计划会特别标记。"
@@ -596,13 +713,45 @@ class ManagerApp:
         ttk.Label(self.resource_tab, textvariable=self.resource_summary_var).pack(anchor="w", pady=(0, 6))
         self.resource_chart = ResourceChart(self.resource_tab, palette=self.palette, height=360, on_open=self.show_resource_detail)
         self.resource_chart.pack(fill="both", expand=True)
-        frame = ttk.LabelFrame(self.resource_tab, text="异常采样点（双击图中圆点或下方记录查看完整分析）", padding=6)
+        frame = ttk.LabelFrame(self.resource_tab, text="异常采样点（每条仅列前三个内存大户；双击查看完整分析）", padding=6)
         frame.pack(fill="x", pady=(8, 0))
         self.snapshot_tree = ttk.Treeview(frame, columns=("time","reason","processes"), show="headings", height=6)
         for key,title,width in (("time","时间",135),("reason","当时状态",210),("processes","内存大户",720)):
             self.snapshot_tree.heading(key,text=title); self.snapshot_tree.column(key,width=width,anchor="w")
         self.snapshot_tree.pack(fill="x")
         self.snapshot_tree.bind("<Double-1>", self.open_selected_snapshot)
+
+    def _build_news(self):
+        toolbar = ttk.Frame(self.news_tab)
+        toolbar.pack(fill="x", pady=(0, 8))
+        self.news_center_status = tk.StringVar(value="读取本地缓存…")
+        ttk.Label(toolbar, textvariable=self.news_center_status, style="Muted.TLabel").pack(side="left")
+        self.news_refresh_button = ttk.Button(toolbar, text="立即更新", command=self.refresh_news_center)
+        self.news_refresh_button.pack(side="right")
+        self.news_progress = ttk.Progressbar(toolbar, maximum=1, mode="determinate", length=220)
+        self.news_progress.pack(side="right", padx=8)
+
+        panes = ttk.Panedwindow(self.news_tab, orient="horizontal")
+        panes.pack(fill="both", expand=True)
+        left = ttk.LabelFrame(panes, text="公告标题（本地最多 50 条）", padding=6)
+        right = ttk.LabelFrame(panes, text="公告内容", padding=6)
+        panes.add(left, weight=2)
+        panes.add(right, weight=3)
+        self.news_tree = ttk.Treeview(left, columns=("time", "title"), show="headings", selectmode="browse")
+        self.news_tree.heading("time", text="时间")
+        self.news_tree.heading("title", text="标题")
+        self.news_tree.column("time", width=130, anchor="w")
+        self.news_tree.column("title", width=360, anchor="w")
+        self.news_tree.pack(fill="both", expand=True)
+        self.news_tree.bind("<<TreeviewSelect>>", self.show_selected_news)
+
+        self.news_detail = tk.Text(right, wrap="word", state="disabled", font=("Microsoft YaHei UI", 10), padx=10, pady=10)
+        detail_scroll = ttk.Scrollbar(right, orient="vertical", command=self.news_detail.yview)
+        self.news_detail.configure(yscrollcommand=detail_scroll.set)
+        self.news_detail.pack(side="left", fill="both", expand=True)
+        detail_scroll.pack(side="right", fill="y")
+        self.news_items: list[dict] = []
+        self.load_news_center()
 
     def _build_settings(self):
         behavior = ttk.LabelFrame(self.settings_tab, text="启动与后台行为", padding=12)
@@ -611,11 +760,14 @@ class ManagerApp:
         self.start_agent_with_gui_var=tk.BooleanVar()
         self.start_minimized_var=tk.BooleanVar()
         self.dark_mode_var=tk.BooleanVar()
+        self.memory_alert_var=tk.BooleanVar()
         ttk.Checkbutton(behavior,text="登录 Windows 后启动管理器",variable=self.start_with_windows_var).grid(row=0,column=0,sticky="w",padx=(0,24),pady=4)
         ttk.Checkbutton(behavior,text="打开管理器时确保 Agent 已启动",variable=self.start_agent_with_gui_var).grid(row=0,column=1,sticky="w",pady=4)
         ttk.Checkbutton(behavior,text="开机启动时直接进入托盘",variable=self.start_minimized_var).grid(row=1,column=0,sticky="w",pady=4)
         ttk.Checkbutton(behavior,text="深色模式（含资源图表）",variable=self.dark_mode_var).grid(row=1,column=1,sticky="w",pady=4)
-        ttk.Label(behavior,text="任务栏固定由 Windows 管理：桌面和开始菜单快捷方式已创建，可右键它选择“固定到任务栏”。",style="Muted.TLabel").grid(row=2,column=0,columnspan=2,sticky="w",pady=(8,0))
+        ttk.Checkbutton(behavior,text="启用内存压力报警",variable=self.memory_alert_var).grid(row=2,column=0,sticky="w",pady=4)
+        ttk.Label(behavior,text="关闭后仍记录资源历史，但不会发送内存压力通知。",style="Muted.TLabel").grid(row=2,column=1,sticky="w",pady=4)
+        ttk.Label(behavior,text="任务栏固定由 Windows 管理：桌面和开始菜单快捷方式已创建，可右键它选择“固定到任务栏”。",style="Muted.TLabel").grid(row=3,column=0,columnspan=2,sticky="w",pady=(8,0))
 
         apps = ttk.LabelFrame(self.settings_tab, text="程序路径与随 Agent 启动", padding=12)
         apps.pack(fill="x", pady=(12,0))
@@ -749,13 +901,17 @@ class ManagerApp:
     def toggle_dashboard_activity(self):
         self.activity_expanded = not self.activity_expanded
         if self.activity_expanded:
-            self.dashboard_resource_chart.pack(fill="x", pady=(0, 6), before=self.recent_log)
-            self.recent_log.pack(fill="both", expand=True)
-            self.activity_toggle.configure(text="折叠")
+            try:
+                self.activity_panes.insert(0, self.dashboard_chart_frame, weight=1)
+            except tk.TclError:
+                pass
+            self.activity_toggle.configure(text="隐藏图表")
         else:
-            self.dashboard_resource_chart.pack_forget()
-            self.recent_log.pack_forget()
-            self.activity_toggle.configure(text="展开")
+            try:
+                self.activity_panes.forget(self.dashboard_chart_frame)
+            except tk.TclError:
+                pass
+            self.activity_toggle.configure(text="显示图表")
 
     def confirm_close(self):
         choice = messagebox.askyesnocancel(
@@ -776,6 +932,8 @@ class ManagerApp:
         if selected is self.resource_tab:
             self.resource_day = datetime.now().date()
             self.refresh_resources()
+        elif selected is self.news_tab:
+            self.load_news_center()
 
     def _apply_runtime_theme(self):
         self._build_style()
@@ -788,6 +946,9 @@ class ManagerApp:
             self.resource_chart.set_palette(palette)
         if hasattr(self, "dashboard_resource_chart"):
             self.dashboard_resource_chart.set_palette(palette)
+        if hasattr(self, "cpu_progress"):
+            self.cpu_progress.set_palette(palette)
+            self.memory_progress.set_palette(palette)
         self._draw_header_gradient()
 
     def _theme_widget_tree(self, widget, palette):
@@ -1010,8 +1171,9 @@ class ManagerApp:
         self.card_vars["MuMu"].set(self._mumu_status())
         self.card_vars["资源"].set(self._resource_status())
         vm = psutil.virtual_memory(); cpu = psutil.cpu_percent(interval=None)
-        self.cpu_progress["value"] = cpu
-        self.memory_progress["value"] = vm.percent
+        self.cpu_progress.set_value(cpu, f"CPU {cpu:.0f}%")
+        used_gb = (vm.total - vm.available) / 1024**3
+        self.memory_progress.set_value(vm.percent, f"内存 {vm.percent:.0f}% · 已用 {used_gb:.1f} GB")
         recent=tail_text(LOG_DIR / "agent.log", max_lines=120, max_bytes=100_000)
         self._set_text(self.recent_log, filter_log_text(recent,self.dashboard_log_mode.get()))
         today = datetime.now().date()
@@ -1069,6 +1231,17 @@ class ManagerApp:
             self.schedule_day=datetime.strptime(self.schedule_day_var.get().strip(),"%Y-%m-%d").date(); self.refresh_schedule()
         except ValueError:
             messagebox.showerror("日期格式错误","请输入 YYYY-MM-DD。",parent=self.root)
+
+    def open_schedule_calendar(self):
+        try:
+            selected = datetime.strptime(self.schedule_day_var.get().strip(), "%Y-%m-%d").date()
+        except ValueError:
+            selected = self.schedule_day
+        CalendarPopup(self.root, selected, self.set_schedule_day, self.palette)
+
+    def set_schedule_day(self, selected: date):
+        self.schedule_day = selected
+        self.refresh_schedule()
 
     def toggle_occurrence(self):
         row=self._selected_schedule()
@@ -1157,7 +1330,7 @@ class ManagerApp:
             used,available,_total=memory_values(row)
             reason="；".join(row.get("abnormal_reasons") or []) or f"内存 {row.get('ram',0):.0f}%"
             apps=row.get("top_apps") or row.get("top_processes") or []
-            processes=f"已用 {used/1024:.1f}GB / 可用 {available/1024:.1f}GB；"+"；".join(f"{x.get('name')} {x.get('mb',0)/1024:.1f}GB" for x in apps[:6])
+            processes=f"已用 {used/1024:.1f}GB / 可用 {available/1024:.1f}GB；"+"；".join(f"{x.get('name')} {x.get('mb',0)/1024:.1f}GB" for x in apps[:3])
             self.snapshot_tree.insert("","end",iid=str(idx),values=(when,reason,processes))
 
     def change_resource_day(self,delta:int):
@@ -1172,6 +1345,78 @@ class ManagerApp:
             index = int(selected[0])
             if 0 <= index < len(self.resource_rows):
                 self.show_resource_detail(self.resource_rows[index])
+
+    def load_news_center(self, result: dict | None = None):
+        data = result or load_news_cache(BASE_DIR, self.cfg)
+        self.news_items = list(data.get("items") or [])
+        for iid in self.news_tree.get_children():
+            self.news_tree.delete(iid)
+        for index, item in enumerate(self.news_items):
+            self.news_tree.insert("", "end", iid=str(index), values=(item.get("display_time") or "—", item.get("title") or "官网公告"))
+        updated = data.get("updated_at") or "尚未更新"
+        self.news_center_status.set(f"本地 {len(self.news_items)} 条 · 更新：{updated}")
+        if self.news_items:
+            self.news_tree.selection_set("0")
+            self.news_tree.focus("0")
+            self.show_selected_news()
+        else:
+            self._set_text(self.news_detail, "还没有本地公告。点击“立即更新”会首次拉取 20 条，并逐条获取正文。")
+
+    def show_selected_news(self, _event=None):
+        selected = self.news_tree.selection()
+        if not selected:
+            return
+        index = int(selected[0])
+        if not 0 <= index < len(self.news_items):
+            return
+        item = self.news_items[index]
+        parts = [
+            str(item.get("title") or "官网公告"),
+            str(item.get("display_time") or "时间未知"),
+            str(item.get("url") or ""),
+            "",
+        ]
+        brief = str(item.get("brief") or "").strip()
+        content = str(item.get("content") or "").strip()
+        if brief:
+            parts.extend(("摘要", brief, ""))
+        parts.extend(("正文", content or "（正文尚未成功缓存；再次点击更新可重试。）"))
+        self._set_text(self.news_detail, "\n".join(parts))
+
+    def _news_progress_update(self, current: int, total: int, message: str):
+        def apply_update():
+            self.news_progress.configure(maximum=max(1, total), value=min(current, max(1, total)))
+            self.news_center_status.set(message)
+        self.root.after(0, apply_update)
+
+    def refresh_news_center(self):
+        if not self.news_items:
+            proceed = messagebox.askokcancel(
+                "首次更新官网公告",
+                "首次更新将拉取约 20 条公告并逐条读取正文。若官网触发人机验证，更新可能中断；请稍后再次点击更新重试。",
+                parent=self.root,
+            )
+            if not proceed:
+                return
+        self.news_refresh_button.configure(state="disabled")
+        self.news_progress.configure(maximum=1, value=0)
+
+        def worker():
+            result = refresh_news_cache(BASE_DIR, self.cfg, progress=self._news_progress_update)
+            self.root.after(0, lambda: self._finish_news_refresh(result))
+
+        threading.Thread(target=worker, name="news-cache-refresh", daemon=True).start()
+
+    def _finish_news_refresh(self, result: dict):
+        self.news_refresh_button.configure(state="normal")
+        self.load_news_center(result)
+        errors = list(result.get("errors") or [])
+        if result.get("status") == "error":
+            messagebox.showerror("公告更新失败", errors[0] if errors else "无法获取官网公告，已保留原有缓存。", parent=self.root)
+        elif errors:
+            messagebox.showwarning("公告更新完成", f"已缓存 {result.get('total', 0)} 条；其中 {len(errors)} 条正文未成功，稍后可再次更新。", parent=self.root)
+        else:
+            messagebox.showinfo("公告更新完成", f"本地缓存 {result.get('total', 0)} 条，新增 {result.get('new_count', 0)} 条。", parent=self.root)
 
     def show_resource_detail(self, row: dict):
         window = tk.Toplevel(self.root)
@@ -1213,6 +1458,7 @@ class ManagerApp:
         self.start_agent_with_gui_var.set(bool(self.cfg.get("gui_start_agent_on_launch",True)))
         self.start_minimized_var.set(bool(self.cfg.get("gui_start_minimized",True)))
         self.dark_mode_var.set(bool(self.cfg.get("gui_dark_mode",True)))
+        self.memory_alert_var.set(bool(self.cfg.get("enable_memory_alert",True)))
         paths=self.cfg.get("launch_paths") or {}; autos=self.cfg.get("auto_start_apps_with_agent") or {}
         for label in self.launch_path_vars:
             self.launch_path_vars[label].set(str(paths.get(label,""))); self.autostart_vars[label].set(bool(autos.get(label,False)))
@@ -1262,6 +1508,7 @@ class ManagerApp:
         self.cfg["gui_start_agent_on_launch"]=self.start_agent_with_gui_var.get()
         self.cfg["gui_start_minimized"]=self.start_minimized_var.get()
         self.cfg["gui_dark_mode"]=self.dark_mode_var.get()
+        self.cfg["enable_memory_alert"]=self.memory_alert_var.get()
         self.cfg["launch_paths"]={k:v.get().strip() for k,v in self.launch_path_vars.items()}
         self.cfg["auto_start_apps_with_agent"]={k:v.get() for k,v in self.autostart_vars.items()}
         self.cfg["enable_news_monitor"]=self.news_enabled_var.get(); self.cfg["news_check_times"]=values
