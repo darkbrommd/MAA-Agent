@@ -175,7 +175,8 @@ class MetricBar(tk.Canvas):
         self.configure(background=self.palette["field"])
         self.create_rectangle(0, 0, width, height, fill=self.palette["field"], outline="")
         self.create_rectangle(0, 0, width * self.value / 100, height, fill=self.fill, outline="")
-        self.create_text(width / 2, height / 2, text=self.label, fill="#ffffff", font=("Microsoft YaHei UI", 9, "bold"))
+        text_color = "#ffffff" if self.palette["bg"] == PALETTES["dark"]["bg"] else self.palette["fg"]
+        self.create_text(width / 2, height / 2, text=self.label, fill=text_color, font=("Microsoft YaHei UI", 9, "bold"))
 
 
 class CalendarPopup(tk.Toplevel):
@@ -512,6 +513,10 @@ class ManagerApp:
         style.configure("TCheckbutton", background=palette["bg"], foreground=palette["fg"])
         style.configure("TRadiobutton", background=palette["bg"], foreground=palette["fg"])
         style.configure("TNotebook", background=palette["bg"], borderwidth=0)
+        style.configure("Activity.TLabelframe", background=palette["panel"])
+        style.configure("Activity.TLabelframe.Label", background=palette["panel"], foreground=palette["fg"])
+        style.configure("Activity.TFrame", background=palette["panel"])
+        style.configure("Activity.TPanedwindow", background=palette["panel"])
         style.configure("TNotebook.Tab", background=palette["field"], foreground=palette["muted"], padding=(14, 8))
         style.map(
             "TNotebook.Tab",
@@ -642,12 +647,12 @@ class ManagerApp:
         info = ttk.Panedwindow(self.dashboard, orient="horizontal")
         info.pack(fill="both", expand=True, pady=(6, 0))
         schedule_frame = ttk.LabelFrame(info, text="未来计划", padding=8)
-        activity_frame = ttk.LabelFrame(info, text="最近事件与内存趋势", padding=8)
+        activity_frame = ttk.LabelFrame(info, text="最近事件与内存趋势", padding=8, style="Activity.TLabelframe")
         info.add(schedule_frame, weight=2)
         info.add(activity_frame, weight=1)
         self.next_schedule = tk.Text(schedule_frame, height=16, wrap="none", state="disabled", font=("Consolas", 10))
         self.next_schedule.pack(fill="both", expand=True)
-        activity_bar = ttk.Frame(activity_frame)
+        activity_bar = ttk.Frame(activity_frame, style="Activity.TFrame")
         activity_bar.pack(fill="x", pady=(0, 5))
         ttk.Label(activity_bar, text="显示").pack(side="left")
         self.dashboard_log_mode = tk.StringVar(value="仅事故与恢复")
@@ -656,10 +661,10 @@ class ManagerApp:
         self.activity_toggle = ttk.Button(activity_bar, text="隐藏图表", width=9, command=self.toggle_dashboard_activity)
         self.activity_toggle.pack(side="right")
         self.dashboard_log_mode.trace_add("write", lambda *_: self.refresh_dashboard())
-        self.activity_panes = ttk.Panedwindow(activity_frame, orient="vertical")
+        self.activity_panes = ttk.Panedwindow(activity_frame, orient="vertical", style="Activity.TPanedwindow")
         self.activity_panes.pack(fill="both", expand=True)
-        self.dashboard_chart_frame = ttk.Frame(self.activity_panes)
-        self.dashboard_log_frame = ttk.Frame(self.activity_panes)
+        self.dashboard_chart_frame = ttk.Frame(self.activity_panes, style="Activity.TFrame")
+        self.dashboard_log_frame = ttk.Frame(self.activity_panes, style="Activity.TFrame")
         self.dashboard_resource_chart = ResourceChart(self.dashboard_chart_frame, palette=self.palette, height=150, on_open=self.show_resource_detail)
         self.dashboard_resource_chart.pack(fill="both", expand=True)
         self.recent_log = tk.Text(self.dashboard_log_frame, height=8, wrap="word", state="disabled", font=("Consolas", 9))
