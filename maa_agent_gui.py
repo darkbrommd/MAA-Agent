@@ -1555,9 +1555,10 @@ class ManagerApp:
             self.schedule_range_start -= timedelta(days=1)
         else:
             self.schedule_range_end += timedelta(days=1)
-        # Keep at most five calendar days alive.  Reaching an edge loads one
-        # more day and retires the farthest day, so long browsing stays cheap.
-        while (self.schedule_range_end - self.schedule_range_start).days + 1 > 5:
+        # Keep exactly the requested previous/current/next-day window alive.
+        # Retiring the farthest day also keeps the number of native Tk child
+        # widgets low, which materially improves Windows scroll painting.
+        while (self.schedule_range_end - self.schedule_range_start).days + 1 > 3:
             if direction < 0:
                 self.schedule_range_end -= timedelta(days=1)
             else:

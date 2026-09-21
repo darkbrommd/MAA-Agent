@@ -10,6 +10,7 @@ widgets stay usable on their own and remain cheap to unit test.
 from __future__ import annotations
 
 import calendar
+import ctypes
 import os
 import tkinter as tk
 from datetime import date, datetime
@@ -208,7 +209,7 @@ class ScrollableFrame(ttk.Frame):
         self.on_scroll_intent = on_scroll_intent
         super().__init__(master, **kwargs)
         self.canvas = tk.Canvas(self, background=self.palette["bg"], highlightthickness=0, bd=0)
-        self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self._scrollbar_yview)
         self.canvas.configure(yscrollcommand=self._on_yview_changed)
         self.canvas.grid(row=0, column=0, sticky="nsew")
         self.scrollbar.grid(row=0, column=1, sticky="ns")
@@ -238,6 +239,8 @@ class ScrollableFrame(ttk.Frame):
 
     def begin_update(self) -> None:
         """Coalesce multiple child changes into one visible layout pass."""
+        if self._layout_suspended == 0:
+            self._set_native_redraw(False)
         self._layout_suspended += 1
 
     def end_update(self) -> None:
@@ -246,6 +249,7 @@ class ScrollableFrame(ttk.Frame):
         self._layout_suspended -= 1
         if self._layout_suspended == 0:
             self.refresh_scrollregion()
+            self._set_native_redraw(True)
 
     def refresh_scrollregion(self) -> None:
         if self._layout_suspended:
@@ -326,13 +330,40 @@ class ScrollableFrame(ttk.Frame):
     def _content_overflows(self) -> bool:
         return self.body.winfo_reqheight() > self.canvas.winfo_height()
 
+    def _set_native_redraw(self, enabled: bool) -> int | None:
+        """Pause/resume Win32 painting so one scroll is presented atomically."""
+        if not IS_WINDOWS:
+            return None
+        try:
+            hwnd = int(self.canvas.winfo_id())
+            user32 = ctypes.windll.user32
+            user32.SendMessageW(ctypes.c_void_p(hwnd), 0x000B, int(enabled), 0)  # WM_SETREDRAW
+            if enabled:
+                # Invalidate once, include descendants, paint immediately and
+                # suppress the background erase that causes a white/black flash.
+                user32.RedrawWindow(ctypes.c_void_p(hwnd), None, None, 0x01A1)
+            return hwnd
+        except (AttributeError, OSError, tk.TclError, ValueError):
+            return None
+
+    def _scrollbar_yview(self, *args) -> None:
+        self._set_native_redraw(False)
+        try:
+            self.canvas.yview(*args)
+        finally:
+            self._set_native_redraw(True)
+
     def _on_mousewheel(self, event):
         if not self._wheel_bound or not self._content_overflows():
             return None
         delta = getattr(event, "delta", 0) or 0
         steps = -int(delta / 120) if abs(delta) >= 120 else (-1 if delta > 0 else 1)
         if steps:
-            self.canvas.yview_scroll(steps, "units")
+            self._set_native_redraw(False)
+            try:
+                self.canvas.yview_scroll(steps, "units")
+            finally:
+                self._set_native_redraw(True)
             if self.on_scroll_intent is not None:
                 try:
                     first, last = self.canvas.yview()
