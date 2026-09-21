@@ -202,6 +202,18 @@ class ScrollableFrameTests(TkWidgetTestCase):
         self.assertGreater(filled_region[3] - filled_region[1], empty_region[3] - empty_region[1])
         self.assertGreater(filled_region[3], frame.canvas.winfo_height())
 
+    def test_batch_update_defers_scrollregion_until_end(self):
+        frame = self.make_scrollable()
+        before = frame.canvas.cget("scrollregion")
+        frame.begin_update()
+        for index in range(40):
+            ttk.Label(frame.body, text=f"batched {index}").pack(anchor="w")
+        frame.refresh_scrollregion()
+        self.assertEqual(frame.canvas.cget("scrollregion"), before)
+        frame.end_update()
+        self.settle()
+        self.assertNotEqual(frame.canvas.cget("scrollregion"), before)
+
     def test_canvas_background_follows_palette(self):
         frame = self.make_scrollable()
         self.assertEqual(frame.canvas.cget("background"), DARK["bg"])
@@ -246,6 +258,19 @@ class ScrollableFrameTests(TkWidgetTestCase):
         self.settle()
         self.assertFalse(frame.wheel_bound)
         self.assertEqual(frame.canvas.yview(), resting)
+
+    def test_scroll_intent_only_reports_real_wheel_input(self):
+        calls = []
+        frame = self.make_scrollable(on_scroll_intent=lambda steps, first, last: calls.append((steps, first, last)))
+        self.fill_body(frame)
+        frame.canvas.yview_moveto(0.5)
+        self.settle()
+        self.assertEqual(calls, [])
+        frame.canvas.event_generate("<Enter>")
+        frame.body.event_generate("<MouseWheel>", delta=120)
+        self.settle()
+        self.assertEqual(len(calls), 1)
+        self.assertLess(calls[0][0], 0)
 
     def test_unbind_restores_a_pre_existing_wheel_binding(self):
         calls = []

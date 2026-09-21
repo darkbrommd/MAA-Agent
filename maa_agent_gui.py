@@ -704,6 +704,7 @@ class ManagerApp:
             self.schedule_tab,
             palette=self.palette,
             on_view_change=self._on_schedule_view_change,
+            on_scroll_intent=self._on_schedule_scroll_intent,
         )
         self.schedule_cards.pack(fill="both", expand=True)
         actions = ttk.Frame(self.schedule_tab)
@@ -782,7 +783,10 @@ class ManagerApp:
         return field
 
     def _build_settings(self):
-        behavior = ttk.LabelFrame(self.settings_tab, text="启动与后台行为", padding=12)
+        self.settings_scroll = ScrollableFrame(self.settings_tab, palette=self.palette)
+        self.settings_scroll.pack(fill="both", expand=True)
+        settings_body = self.settings_scroll.body
+        behavior = ttk.LabelFrame(settings_body, text="启动与后台行为", padding=12)
         behavior.pack(fill="x")
         self.start_with_windows_var=tk.BooleanVar()
         self.start_agent_with_gui_var=tk.BooleanVar()
@@ -797,7 +801,7 @@ class ManagerApp:
         ttk.Label(behavior,text="关闭后仍记录资源历史，但不会发送内存压力通知。",style="Muted.TLabel").grid(row=2,column=1,sticky="w",pady=4)
         ttk.Label(behavior,text="任务栏固定由 Windows 管理：桌面和开始菜单快捷方式已创建，可右键它选择“固定到任务栏”。",style="Muted.TLabel").grid(row=3,column=0,columnspan=2,sticky="w",pady=(8,0))
 
-        apps = ttk.LabelFrame(self.settings_tab, text="实例别名、程序路径与随 Agent 启动", padding=12)
+        apps = ttk.LabelFrame(settings_body, text="实例别名、程序路径与随 Agent 启动", padding=12)
         apps.pack(fill="x", pady=(12,0))
         self.launch_path_vars={}; self.autostart_vars={}; self.instance_alias_vars={}
         ttk.Label(apps,text="实例",style="Muted.TLabel").grid(row=0,column=0,sticky="w")
@@ -817,7 +821,7 @@ class ManagerApp:
             self._toggle_field(apps,"随 Agent 启动",auto_var).grid(row=row,column=5,sticky="ew",padx=(10,0))
         apps.columnconfigure(2,weight=1)
 
-        news = ttk.LabelFrame(self.settings_tab, text="明日方舟官网维护公告", padding=12)
+        news = ttk.LabelFrame(settings_body, text="明日方舟官网维护公告", padding=12)
         news.pack(fill="x", pady=(12,0))
         self.news_enabled_var=tk.BooleanVar(); self.news_times_var=tk.StringVar(); self.news_status_var=tk.StringVar()
         self._toggle_field(news,"启用官网公告监控",self.news_enabled_var).grid(row=0,column=0,sticky="ew")
@@ -825,7 +829,7 @@ class ManagerApp:
         ttk.Entry(news,textvariable=self.news_times_var,width=20).grid(row=0,column=2,sticky="w")
         ttk.Label(news,text="仅新增且标题/摘要命中维护关键词时读取正文；普通公告不调用 DeepSeek，也不发送通知。",style="Muted.TLabel").grid(row=1,column=0,columnspan=4,sticky="w",pady=(8,0))
         ttk.Label(news,textvariable=self.news_status_var,style="Muted.TLabel").grid(row=2,column=0,columnspan=4,sticky="w",pady=(5,0))
-        bark = ttk.LabelFrame(self.settings_tab, text="Bark 失败重试", padding=12)
+        bark = ttk.LabelFrame(settings_body, text="Bark 失败重试", padding=12)
         bark.pack(fill="x", pady=(12,0))
         self.bark_retry_attempts_var=tk.StringVar(); self.bark_retry_sleep_var=tk.StringVar(); self.bark_retry_infinite_var=tk.BooleanVar()
         ttk.Label(bark,text="每次发送尝试次数").grid(row=0,column=0,sticky="e",padx=(0,6))
@@ -833,7 +837,7 @@ class ManagerApp:
         ttk.Label(bark,text="每次间隔（秒）").grid(row=0,column=2,sticky="e",padx=(22,6))
         ttk.Entry(bark,textvariable=self.bark_retry_sleep_var,width=8).grid(row=0,column=3,sticky="w")
         self._toggle_field(bark,"无限保留失败消息并持续补发（不会阻塞监控主循环）",self.bark_retry_infinite_var).grid(row=0,column=4,sticky="ew",padx=(24,0))
-        bar=ttk.Frame(self.settings_tab); bar.pack(fill="x",pady=(14,0))
+        bar=ttk.Frame(settings_body); bar.pack(fill="x",pady=(14,0))
         ttk.Button(bar,text="修复桌面与开始菜单快捷方式",command=self.install_shortcuts).pack(side="left")
         ttk.Button(bar,text="保存设置",command=self.save_settings).pack(side="right")
 
@@ -979,7 +983,7 @@ class ManagerApp:
         if hasattr(self, "cpu_progress"):
             self.cpu_progress.set_palette(palette)
             self.memory_progress.set_palette(palette)
-        for name in ("next_schedule_cards", "schedule_cards", "snapshot_cards"):
+        for name in ("next_schedule_cards", "schedule_cards", "snapshot_cards", "settings_scroll"):
             widget = getattr(self, name, None)
             if widget is not None:
                 widget.set_palette(palette)
@@ -1399,12 +1403,14 @@ class ManagerApp:
         signature = (self.schedule_range_start, self.schedule_range_end, self._schedule_rows_signature(self.schedule_rows))
         if force or signature != self._schedule_signature:
             self._schedule_rendering = True
+            self.schedule_cards.begin_update()
             try:
                 self._render_schedule_rows(self.schedule_cards, self.schedule_rows)
                 self._schedule_signature = signature
             finally:
+                self.schedule_cards.end_update()
                 self._schedule_rendering = False
-            self.root.after_idle(self._restore_schedule_position)
+            self.root.after_idle(self._finish_schedule_render)
 
     def change_schedule_day(self,delta:int):
         self.set_schedule_day(self.schedule_day + timedelta(days=delta))
@@ -1500,6 +1506,14 @@ class ManagerApp:
         self._schedule_initial_position_pending = False
         self.root.after_idle(lambda: setattr(self, "_schedule_restoring", False))
 
+    def _finish_schedule_render(self) -> None:
+        """Swap the rebuilt timeline into view only after layout and positioning."""
+        try:
+            self._restore_schedule_position()
+            self.schedule_cards.canvas.update_idletasks()
+        except tk.TclError:
+            pass
+
     def _on_schedule_view_change(self, first: float, last: float) -> None:
         if self._schedule_rendering or self._schedule_restoring:
             return
@@ -1520,14 +1534,17 @@ class ManagerApp:
         except (AttributeError, tk.TclError):
             return
 
+    def _on_schedule_scroll_intent(self, steps: int, first: float, last: float) -> None:
+        """Lazy-load only from a real wheel gesture, never from layout callbacks."""
+        if self._schedule_rendering or self._schedule_restoring:
+            return
         if self._schedule_initial_position_pending or self._schedule_extend_pending:
             return
-        if not self.schedule_cards._content_overflows():
+        direction = -1 if steps < 0 and first <= 0.015 else (1 if steps > 0 and last >= 0.985 else 0)
+        if not direction:
             return
-        direction = -1 if first <= 0.015 else (1 if last >= 0.985 else 0)
-        if direction:
-            self._schedule_extend_pending = True
-            self.root.after_idle(lambda step=direction: self._extend_schedule_window(step))
+        self._schedule_extend_pending = True
+        self.root.after_idle(lambda step=direction: self._extend_schedule_window(step))
 
     def _extend_schedule_window(self, direction: int) -> None:
         self._schedule_extend_pending = False

@@ -201,9 +201,11 @@ class ScrollableFrame(ttk.Frame):
 
     def __init__(self, master: tk.Misc, palette: dict | None = None,
                  on_view_change: Callable[[float, float], None] | None = None,
+                 on_scroll_intent: Callable[[int, float, float], None] | None = None,
                  **kwargs):
         self.palette = coerce_palette(palette)
         self.on_view_change = on_view_change
+        self.on_scroll_intent = on_scroll_intent
         super().__init__(master, **kwargs)
         self.canvas = tk.Canvas(self, background=self.palette["bg"], highlightthickness=0, bd=0)
         self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
@@ -216,6 +218,7 @@ class ScrollableFrame(ttk.Frame):
         self.body = ttk.Frame(self.canvas)
         self.window_id = self.canvas.create_window((0, 0), window=self.body, anchor="nw")
 
+        self._layout_suspended = 0
         self._wheel_bound = False
         self._previous_wheel_script = ""
         self.body.bind("<Configure>", self._on_body_configure)
@@ -233,7 +236,20 @@ class ScrollableFrame(ttk.Frame):
             child.destroy()
         self.refresh_scrollregion()
 
+    def begin_update(self) -> None:
+        """Coalesce multiple child changes into one visible layout pass."""
+        self._layout_suspended += 1
+
+    def end_update(self) -> None:
+        if self._layout_suspended <= 0:
+            return
+        self._layout_suspended -= 1
+        if self._layout_suspended == 0:
+            self.refresh_scrollregion()
+
     def refresh_scrollregion(self) -> None:
+        if self._layout_suspended:
+            return
         self.canvas.update_idletasks()
         bbox = self.canvas.bbox("all")
         self.canvas.configure(scrollregion=bbox if bbox else (0, 0, 0, 0))
@@ -254,7 +270,7 @@ class ScrollableFrame(ttk.Frame):
 
     # -- geometry -----------------------------------------------------------
     def _on_body_configure(self, event) -> None:
-        if event.widget is self.body:
+        if event.widget is self.body and not self._layout_suspended:
             self.refresh_scrollregion()
 
     def _on_canvas_configure(self, event) -> None:
@@ -317,6 +333,12 @@ class ScrollableFrame(ttk.Frame):
         steps = -int(delta / 120) if abs(delta) >= 120 else (-1 if delta > 0 else 1)
         if steps:
             self.canvas.yview_scroll(steps, "units")
+            if self.on_scroll_intent is not None:
+                try:
+                    first, last = self.canvas.yview()
+                    self.on_scroll_intent(steps, float(first), float(last))
+                except (TypeError, ValueError, tk.TclError):
+                    pass
         return "break"
 
 
