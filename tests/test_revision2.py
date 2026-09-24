@@ -220,7 +220,25 @@ class AgentLogicTests(unittest.TestCase):
             pending = agent.load_pending_issues("MAA1")["issues"]
             self.assertTrue(next(iter(pending.values()))["alerted"])
 
-    def test_progress_resolves_pending_and_open_incident(self):
+    def test_new_task_id_rearms_an_unresolved_failure(self):
+        with isolated_agent():
+            d = {"category":"task_failed","title":"任务执行失败","task":"自动清理智","happened":"自动清理智失败。","likely":"测试","action":"检查"}
+            first = datetime.now() - timedelta(hours=13)
+            agent.queue_pending_issue("MAA2", d, "Fight", first, {"taskid":160,"uuid":"device"})
+            state = agent.load_pending_issues("MAA2")
+            state["issues"][agent.pending_signature(d,"Fight")]["alerted"] = True
+            agent.save_pending_issues("MAA2", state)
+            second = datetime.now()
+            rec = agent.queue_pending_issue("MAA2", d, "Fight", second, {"taskid":168,"uuid":"device"})
+            self.assertFalse(rec["alerted"])
+            self.assertAlmostEqual(rec["first_error"], second.timestamp(), delta=1)
+            calls=[]
+            with patch.object(agent, "bark", side_effect=lambda *a,**k: calls.append((a,k))):
+                agent.evaluate_pending_issues("MAA2")
+            self.assertEqual(len(calls),1)
+            self.assertTrue(next(iter(agent.load_pending_issues("MAA2")["issues"].values()))["alerted"])
+
+    def test_only_same_chain_completion_resolves_task_failure(self):
         with isolated_agent():
             d = {"category":"task_failed","title":"任务链持续失败","task":"自动清理智","happened":"自动清理智失败。","likely":"测试","action":"检查"}
             agent.queue_pending_issue("MAA1", d, "Fight", datetime.now() - timedelta(minutes=7))
@@ -229,7 +247,11 @@ class AgentLogicTests(unittest.TestCase):
             pending = agent.load_pending_issues("MAA1")
             pending["issues"][sig]["alerted"] = True
             agent.save_pending_issues("MAA1", pending)
-            agent.resolve_pending_on_progress("MAA1", datetime.now(), "TaskChainStart", "Fight")
+            agent.resolve_pending_on_progress("MAA1", datetime.now(), "TaskChainStart", "Recruit")
+            self.assertTrue(agent.load_pending_issues("MAA1")["issues"], "unrelated progress must not erase a failed chain")
+            agent.resolve_pending_on_progress("MAA1", datetime.now(), "AllTasksCompleted", "CloseDown")
+            self.assertTrue(agent.load_pending_issues("MAA1")["issues"], "queue completion is not task success")
+            agent.resolve_pending_on_progress("MAA1", datetime.now(), "TaskChainCompleted", "Fight")
             self.assertFalse(agent.load_pending_issues("MAA1")["issues"])
             self.assertFalse(agent.incident_is_open(f"maa_issue|MAA1|{sig}"))
 
@@ -332,6 +354,25 @@ class AgentLogicTests(unittest.TestCase):
                 agent.process_log_text("MAA1", Path("dummy.log"), text)
             self.assertFalse(agent.load_pending_issues("MAA1")["issues"])
 
+    def test_login_failure_text_waits_for_terminal_chain_result(self):
+        with isolated_agent({"enable_bark":True}):
+            now=datetime.now(); text=f'[{now:%Y-%m-%d %H:%M:%S}.000][WRN] asst::StartUpTask::run | Login failed, entering game-restart loop'
+            sent=[]
+            with patch.object(agent,"send_bark_payload",side_effect=lambda payload: sent.append(payload) or True):
+                agent.process_log_text("MAA2",Path("asst.log"),text)
+            self.assertEqual(sent,[])
+            self.assertFalse(agent.load_pending_issues("MAA2")["issues"])
+
+    def test_restart_preserves_log_offset_and_reads_downtime_append(self):
+        with isolated_agent() as base:
+            source=base/"MAA1"/"debug"/"asst.log"; source.parent.mkdir(parents=True)
+            source.write_text("old line\n",encoding="utf-8")
+            agent.cfg["maa_log_paths"]=[str(source)]; agent.cfg["skip_old_logs_on_start"]=True
+            agent.initialize_log_offsets_on_start()
+            source.write_text("old line\nnew while agent stopped\n",encoding="utf-8")
+            agent.initialize_log_offsets_on_start()
+            self.assertEqual(agent.read_new_log_text(source),"new while agent stopped\n")
+
     def test_deepseek_only_when_useful(self):
         with isolated_agent():
             data = agent.load_daily_stats()
@@ -400,6 +441,23 @@ class AgentLogicTests(unittest.TestCase):
                 with patch.object(agent, "schedule_monitoring_coverage_start", return_value=datetime(2026,9,20,9,0)), \
                      patch.object(agent, "bark", side_effect=lambda *a,**k: calls.append((a,k))):
                     agent.check_scheduled_runs()
+            self.assertEqual(calls,[])
+
+    def test_observed_schedule_before_midnight_is_found_after_daily_rollover(self):
+        with isolated_agent({"maa_schedule":{"MAA1":["22:00"]},"enable_scheduled_run_check":True,"scheduled_run_grace_minutes":20}) as base:
+            previous = {
+                "date": "2026-09-21",
+                "observed_runs": {"MAA1": [{"occurrence": "2026-09-21 22:00"}]},
+            }
+            (base / "state" / "daily_2026-09-21.json").write_text(
+                json.dumps(previous), encoding="utf-8"
+            )
+            FrozenDateTime.current = datetime(2026, 9, 22, 0, 30)
+            calls=[]
+            with patch.object(agent, "datetime", FrozenDateTime), \
+                 patch.object(agent, "schedule_monitoring_coverage_start", return_value=datetime(2026,9,21,21,0)), \
+                 patch.object(agent, "bark", side_effect=lambda *a,**k: calls.append((a,k))):
+                agent.check_scheduled_runs()
             self.assertEqual(calls,[])
 
     def test_skipped_schedule_is_not_reported_missing(self):

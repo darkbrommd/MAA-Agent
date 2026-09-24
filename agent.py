@@ -1439,10 +1439,16 @@ def initialize_log_offsets_on_start():
     if not cfg.get("skip_old_logs_on_start", True):
         return
 
-    count = 0
+    count = 0; preserved = 0
     for path in existing_logs():
         try:
             state_path = log_offset_state_path(path)
+            # Existing offsets belong to this exact log path and must survive
+            # Agent restarts. Overwriting them here would silently discard any
+            # MAA output written while the monitor was stopped.
+            if state_path.exists():
+                preserved += 1
+                continue
             state = {
                 "path": str(path),
                 "offset": path.stat().st_size,
@@ -1454,7 +1460,7 @@ def initialize_log_offsets_on_start():
         except Exception as e:
             log(f"Failed to prime offset for {path}: {e}")
 
-    log(f"Primed {count} log offset(s) on startup.")
+    log(f"Log offsets ready: primed {count}, preserved {preserved}.")
 
 
 def read_new_log_text(path):
@@ -1536,7 +1542,6 @@ SPECIAL_NOTICE_PATTERNS = [
     "GameStartUpdateOCR",
     "GameStartCheckResourceOCR",
     "PrtsErrorConfirm",
-    "OfflineConfirm",
     "NotDownloadVoice",
     "TodaysSupplies",
     "There is no available start button",
@@ -1603,6 +1608,24 @@ def parse_maa_records(text):
     return rows
 
 
+def has_confirmed_subtask(records, task_name):
+    """Return true only when MAA actually entered a named task node.
+
+    Raw analyzer lines list every candidate in ``to_be_recognized``.  A name
+    appearing there is not a recognition result; only callback details.task is.
+    """
+    wanted=str(task_name).lower()
+    for record in records:
+        if record.get("callback") not in {"SubTaskStart", "SubTaskCompleted"}:
+            continue
+        payload=record.get("payload") or {}
+        details=payload.get("details") if isinstance(payload,dict) else None
+        actual=details.get("task") if isinstance(details,dict) else None
+        if actual and str(actual).lower().split("@")[-1]==wanted:
+            return True
+    return False
+
+
 def pending_issue_path(label):
     safe=re.sub(r"[^A-Za-z0-9_.-]+","_",label)
     return GENERIC_ISSUE_DIR/f"pending_{safe}.json"
@@ -1625,6 +1648,7 @@ def save_pending_issues(label,data):
 
 def diagnose_maa_event(context, callback=None, chain=None):
     lower=context.lower(); task=readable_chain_name(chain) if chain else "当前任务"
+    terminal=callback in {"TaskChainError","TaskChainStopped"}
     def anyp(words): return any(w.lower() in lower for w in words)
     if anyp(["其他设备登录","在其他设备","账号已在","登录已失效","重复登录","another device","logged in elsewhere","login expired","kicked out"]):
         return {"category":"login_conflict","title":"游戏账号疑似被顶/登录失效","task":task,"happened":f"{task}执行时登录状态异常。","likely":"账号在另一台设备登录、登录态过期，或游戏把当前会话踢下线。","action":"如果你刚在别处登录过可忽略；否则远程看游戏登录界面。","mode":"immediate"}
@@ -1635,19 +1659,31 @@ def diagnose_maa_event(context, callback=None, chain=None):
     if anyp(["fatal exception","崩溃","crash"]):
         return {"category":"crash","title":"MAA / 游戏疑似崩溃","task":task,"happened":f"{task}附近出现崩溃信号。","likely":"MAA、MuMu 或游戏异常退出。","action":"远程确认对应进程状态。","mode":"immediate"}
     if anyp(["device offline","device not found","controller is unavailable","connect failed","connection refused","adb连接失败","adb 连接失败","无法连接","touchmodenotavailable","screencapfailed"]):
-        return {"category":"emulator_connection","title":"MuMu / ADB 连接持续异常","task":task,"happened":f"{task}附近出现 MuMu/ADB 控制连接失败。","likely":"模拟器连接异常或 MuMu/ADB 卡住。","action":"远程检查 MuMu/ADB 与游戏状态。","mode":"pending_connection"}
+        return {"category":"task_failed" if terminal else "emulator_connection","title":"任务因 MuMu / ADB 连接异常而失败" if terminal else "MuMu / ADB 连接持续异常","task":task,"happened":f"{task}出现 MuMu/ADB 控制连接失败。","likely":"模拟器连接异常或 MuMu/ADB 卡住。","action":"远程检查 MuMu/ADB 与游戏状态。","mode":"pending" if terminal else "pending_connection"}
     if anyp(["network error","network timeout","timed out","connection reset","网络错误","网络异常","请求超时","连接超时"]):
-        return {"category":"game_network","title":"游戏/网络持续异常","task":task,"happened":f"{task}附近出现网络连接失败。","likely":"代理、网络或游戏服务器短时异常。","action":"只有持续不恢复才需要检查网络/代理。","mode":"pending_connection"}
+        return {"category":"task_failed" if terminal else "game_network","title":"任务因游戏/网络异常而失败" if terminal else "游戏/网络持续异常","task":task,"happened":f"{task}出现网络连接失败。","likely":"代理、网络或游戏服务器异常。","action":"远程检查网络、代理与游戏状态。" if terminal else "只有持续不恢复才需要检查网络/代理。","mode":"pending" if terminal else "pending_connection"}
+    # OfflineConfirm occurs in MAA's candidate lists during normal operation.
+    # It is failure evidence only when a callback says that node was entered,
+    # or when StartUp emits its explicit login-failure warning.
+    confirmed_offline=has_confirmed_subtask(parse_maa_records(context),"OfflineConfirm")
+    if callback in {"TaskChainError","TaskChainStopped"} and (confirmed_offline or anyp(["login failed, entering game-restart loop"])):
+        return {"category":"task_failed","title":"游戏离线导致任务失败","task":task,"happened":f"{task}遇到游戏离线/登录失败并被中止。","likely":"游戏掉线、登录态失效、账号在其他设备登录，或登录界面发生变化。","action":"远程检查游戏登录界面；恢复登录后重新执行任务。","mode":"pending"}
     if chain=="CloseDown" and callback in {"TaskChainError","TaskChainStopped","SubTaskError","SubTaskStopped"}:
         return {"category":"cleanup_glitch","title":"关闭游戏收尾小异常","task":task,"happened":"关闭游戏收尾步骤返回异常。","likely":"进程关闭竞态。","action":"无需处理。","mode":"suppress"}
-    # Stopped is frequently deliberate or part of MAA's own recovery. Do not
-    # escalate it by itself; explicit root-cause text above still wins.
-    if callback in {"TaskChainStopped","SubTaskStopped"}:
-        return {"category":"task_stopped","title":"任务被停止","task":task,"happened":f"{task}被停止。","likely":"手动停止或 MAA 自身流程控制。","action":"无需单独处理。","mode":"suppress"}
+    # A stopped task chain is terminal. It may sometimes be deliberate, but a
+    # monitoring agent must prefer a false positive over silently accepting a
+    # scheduled run that never completed.
+    if callback=="TaskChainStopped":
+        return {"category":"task_failed","title":"任务链被中止","task":task,"happened":f"{task}在完成前被中止。","likely":"登录、识别、连接失败，或有人手动停止了任务。","action":"确认是否为人工停止；否则远程检查游戏和 MAA。","mode":"pending"}
+    if callback=="SubTaskStopped":
+        return {"category":"subtask_stopped","title":"子任务被停止","task":task,"happened":f"{task}的子任务被停止。","likely":"手动停止或 MAA 内部流程控制。","action":"若不是人工操作，检查当前画面。","mode":"suppress"}
     if callback=="SubTaskError":
-        return {"category":"subtask_retry","title":"子任务重试","task":task,"happened":f"{task}出现一次子任务错误。","likely":"识别/点击的一次性失败。","action":"先观察自动重试。","mode":"suppress"}
+        # This callback is retry-level telemetry: successful Infrast/Mall runs
+        # routinely emit it.  The enclosing chain's terminal callback decides
+        # success or failure and is handled separately below/above.
+        return {"category":"subtask_retry","title":"子任务重试","task":task,"happened":f"{task}出现一次可恢复的子任务错误。","likely":"MAA 正在重试识别或跳过非关键步骤。","action":"等待所属任务链的最终结果。","mode":"suppress"}
     if callback=="TaskChainError":
-        return {"category":"task_failed","title":"任务持续失败","task":task,"happened":f"{task}没有正常完成。","likely":"界面识别、游戏状态或连接出现异常。","action":"远程检查当前游戏画面和 MAA 状态。","mode":"pending"}
+        return {"category":"task_failed","title":"任务执行失败","task":task,"happened":f"{task}没有正常完成。","likely":"界面识别、游戏状态或连接出现异常。","action":"远程检查当前游戏画面和 MAA 状态。","mode":"pending"}
     return None
 
 
@@ -1655,13 +1691,25 @@ def pending_signature(d,chain):
     return f"{d.get('category')}|{chain or 'unknown'}"
 
 
-def queue_pending_issue(label,d,chain,event_dt):
+def queue_pending_issue(label,d,chain,event_dt,payload=None):
     data=load_pending_issues(label); issues=data.setdefault("issues",{}); sig=pending_signature(d,chain)
-    ts=(event_dt or datetime.now()).timestamp(); rec=issues.get(sig) or {
+    ts=(event_dt or datetime.now()).timestamp(); old=issues.get(sig)
+    taskid=payload.get("taskid") if isinstance(payload,dict) else None
+    uuid=payload.get("uuid") if isinstance(payload,dict) else None
+    occurrence_id=(f"{uuid or ''}|{taskid}" if taskid is not None else None)
+    rec=old or {
         "signature":sig,"category":d.get("category"),"chain":chain,"title":d.get("title"),"task":d.get("task"),
         "happened":d.get("happened"),"likely":d.get("likely"),"action":d.get("action"),"first_error":ts,
         "last_error":ts,"count":0,"alerted":False
     }
+    # A later task id is a new execution, not a duplicate callback from the
+    # old one. Re-arm the alert and its age clock so recurring failures cannot
+    # be silenced forever by an earlier alerted record.
+    if old and occurrence_id and occurrence_id!=old.get("occurrence_id"):
+        rec["first_error"]=ts; rec["alerted"]=False; rec.pop("alerted_at",None)
+    if occurrence_id:
+        rec["occurrence_id"]=occurrence_id; rec["taskid"]=taskid
+        if uuid: rec["uuid"]=uuid
     rec["last_error"]=max(float(rec.get("last_error",ts)),ts); rec["count"]=int(rec.get("count",0))+1
     issues[sig]=rec; save_pending_issues(label,data); return rec
 
@@ -1674,13 +1722,20 @@ def resolve_pending_on_progress(label,event_dt,callback,chain=None):
         last=float(rec.get("last_error",0) or 0)
         if ts < last:
             continue
-        # Any meaningful forward progress after a generic/connection error is
-        # enough to classify it as self-recovered. This intentionally favors
-        # silence over warning about errors that MAA already worked through.
-        if ts>=last:
+        # A TaskChainError is a terminal failure for that task chain. Starting
+        # another chain (and even AllTasksCompleted) only proves that the queue
+        # moved on; it does not prove that the failed chain recovered. Only an
+        # explicit completion of the same chain may clear this failure.
+        if rec.get("category")=="task_failed":
+            recovered=(callback=="TaskChainCompleted" and bool(chain) and chain==rec.get("chain"))
+        else:
+            # Generic connection/network errors may legitimately self-recover
+            # once MAA produces any later normal progress.
+            recovered=True
+        if recovered:
             if rec.get("alerted"):
-                resolve_incident(key=f"maa_issue|{label}|{sig}",resolution="MAA 后续继续产生正常进展")
-            add_recoverable_issue(rec.get("category","recovered"),f"{rec.get('task') or '任务'} 异常后已继续运行",label=label,task=rec.get("task"))
+                resolve_incident(key=f"maa_issue|{label}|{sig}",resolution="同一任务链随后明确完成")
+            add_recoverable_issue(rec.get("category","recovered"),f"{rec.get('task') or '任务'} 异常后已恢复",label=label,task=rec.get("task"))
             issues.pop(sig,None); changed=True
     if changed: save_pending_issues(label,data)
     # Immediate high-confidence incidents should not poison the nightly report
@@ -1705,20 +1760,28 @@ def evaluate_pending_issues(label):
         # Repeated failures are evidence of a continuous stall, not a reason to
         # restart the clock. Progress removes the pending record elsewhere, so
         # elapsed time must be measured from the first unresolved error.
-        age=(now_ts-float(rec.get("first_error",rec.get("last_error",now_ts))))/60.0
+        # Log timestamps can be a fraction of a second ahead of the monitor's
+        # wall clock. Clamp to zero so explicit failures are still immediate.
+        age=max(0.0,(now_ts-float(rec.get("first_error",rec.get("last_error",now_ts))))/60.0)
         if age>720:
             issues.pop(sig,None); changed=True; continue
-        threshold=float(cfg.get("connection_error_stall_minutes",5) if rec.get("category") in {"emulator_connection","game_network"} else cfg.get("generic_error_stall_minutes",6))
+        category=rec.get("category","task_failed")
+        # TaskChainError is MAA's explicit task-chain execution/recognition
+        # failure signal, so it must alert immediately. The grace period is
+        # retained only for lower-confidence connection/network symptoms.
+        threshold=(0.0 if category=="task_failed" else
+                   float(cfg.get("connection_error_stall_minutes",5) if category in {"emulator_connection","game_network"} else cfg.get("generic_error_stall_minutes",6)))
         if age<threshold or rec.get("alerted"):
             continue
         rec["alerted"]=True; rec["alerted_at"]=now_str(); changed=True
-        category=rec.get("category","task_failed"); chain=rec.get("chain"); task=rec.get("task") or readable_chain_name(chain or "当前任务")
-        body=(f"发生了什么：{rec.get('happened')}，之后一直没有恢复正常进展。\n"
+        chain=rec.get("chain"); task=rec.get("task") or readable_chain_name(chain or "当前任务")
+        status_text=("MAA 已明确报告该任务失败；后续其他任务继续或队列结束都不代表它成功。" if category=="task_failed" else "之后一直没有恢复正常进展。")
+        body=(f"发生了什么：{rec.get('happened')}，{status_text}\n"
               f"大概率原因：{rec.get('likely')}\n你要做什么：{rec.get('action')}")
         add_incident(category,rec.get("happened"),label=label,task=task,likely=rec.get("likely"),action=rec.get("action"),key=f"maa_issue|{label}|{sig}")
         add_daily_alert(f"{label}：{rec.get('title')}（{task}）",severity="warning",label=label)
         bark(f"{label}：{rec.get('title')}",body,level="timeSensitive",alert_name=f"maa_issue_{label}_{category}")
-        decision_log({"label":label,"decision":"alert_pending_stall","reason":category,"taskchain":chain,"age_minutes":round(age,1),"count":rec.get("count"),"deepseek":False})
+        decision_log({"label":label,"decision":"alert_task_failed" if category=="task_failed" else "alert_pending_stall","reason":category,"taskchain":chain,"age_minutes":round(age,1),"count":rec.get("count"),"deepseek":False})
     if changed: save_pending_issues(label,data)
 
 
@@ -1734,12 +1797,16 @@ def notify_copilot_record_if_needed(label,path,record):
     if record.get("chain")!="Copilot":
         return False
     cb=record.get("callback")
-    status="success" if cb in {"TaskChainCompleted","AllTasksCompleted"} else "failed" if cb=="TaskChainError" else None
+    # AllTasksCompleted means the queue ended, not that every task succeeded.
+    status="success" if cb=="TaskChainCompleted" else "failed" if cb in {"TaskChainError","TaskChainStopped"} else None
     if not status:
-        return True
+        # Let the generic monitor inspect retries and other callbacks. The
+        # optional Copilot notification feature must never become an error-
+        # suppression bypass.
+        return False
     update_taskchain_count(label,"Copilot",status)
     if not copilot_notify_enabled():
-        return True
+        return status=="success"
     state_path=copilot_notify_state_path(label); now_ts=time.time()
     try: old=json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
     except Exception: old={}
@@ -1761,6 +1828,8 @@ def _context_for_record(lines,index,radius=5):
 def process_log_text(label,path,text,backfill_only=False):
     records=parse_maa_records(text)
     special_hits=find_patterns(text,SPECIAL_NOTICE_PATTERNS)
+    if has_confirmed_subtask(records,"OfflineConfirm"):
+        special_hits.append("OfflineConfirm")
     if not backfill_only:
         for hit in special_hits:
             human=SPECIAL_NOTICE_HUMAN.get(hit)
@@ -1793,13 +1862,18 @@ def process_log_text(label,path,text,backfill_only=False):
             bark(f"{label}：{d['title']}",body,level="timeSensitive",alert_name=f"maa_issue_{label}_{d['category']}")
             decision_log({"label":label,"path":str(path),"decision":"alert_immediate","reason":d["category"],"taskchain":chain,"callback":cb,"deepseek":False})
             continue
-        rec=queue_pending_issue(label,d,chain,event_dt)
+        rec=queue_pending_issue(label,d,chain,event_dt,record.get("payload"))
         decision_log({"label":label,"path":str(path),"decision":"defer","reason":d["category"],"taskchain":chain,"callback":cb,"repeat_count":rec.get("count"),"deepseek":False})
+        # Do not wait until the end of the current read batch: a later success
+        # from another task must never erase this explicit failure before Bark
+        # has had a chance to send/queue it.
+        if d.get("category")=="task_failed":
+            evaluate_pending_issues(label)
     if not backfill_only:
         # Also notice low-level connection/network failures that may not carry a
         # callback. They are always deferred; a later normal callback resolves them.
         callbacks={r.get("callback") for r in records if r.get("callback")}
-        if not callbacks.intersection({"InternalError","InitFailed","TaskChainError"}):
+        if not callbacks.intersection({"InternalError","InitFailed","TaskChainError","TaskChainStopped","SubTaskError"}):
             progress_cbs={"TaskChainStart","SubTaskStart","SubTaskCompleted","TaskChainCompleted","AllTasksCompleted"}
             last_progress=max((i for i,r in enumerate(records) if r.get("callback") in progress_cbs),default=-1)
             low_level_patterns=["device offline","device not found","controller is unavailable","connect failed","connection refused","adb连接失败","adb 连接失败","无法连接","network error","network timeout","timed out","connection reset","网络错误","网络异常","请求超时","连接超时"]
