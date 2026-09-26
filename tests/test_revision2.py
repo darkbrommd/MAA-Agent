@@ -30,7 +30,7 @@ def isolated_agent(extra_cfg=None):
         "PID_FILE", "STOP_FILE", "BARK_QUEUE_FILE", "DAILY_REPORT_SKIP_FILE", "DAILY_REPORT_SENT_FILE",
         "RESOURCE_PRESSURE_FILE", "PROCESS_HEALTH_FILE", "HEARTBEAT_STATE_FILE",
         "NETWORK_HEALTH_FILE", "HUNG_STATE_FILE", "SCHEDULE_CACHE_FILE",
-        "GENERIC_ISSUE_DIR", "cfg",
+        "SCHEDULE_RUN_STATE_FILE", "GENERIC_ISSUE_DIR", "cfg",
     ]
     old = {k: getattr(agent, k) for k in attrs}
     with tempfile.TemporaryDirectory() as td:
@@ -58,6 +58,7 @@ def isolated_agent(extra_cfg=None):
         agent.NETWORK_HEALTH_FILE = state / "network_health.json"
         agent.HUNG_STATE_FILE = state / "hung_windows.json"
         agent.SCHEDULE_CACHE_FILE = state / "schedule_cache.json"
+        agent.SCHEDULE_RUN_STATE_FILE = state / "schedule_run_status.json"
         agent.GENERIC_ISSUE_DIR = issues
         c = copy.deepcopy(old["cfg"])
         c.update({
@@ -254,6 +255,157 @@ class AgentLogicTests(unittest.TestCase):
             agent.resolve_pending_on_progress("MAA1", datetime.now(), "TaskChainCompleted", "Fight")
             self.assertFalse(agent.load_pending_issues("MAA1")["issues"])
             self.assertFalse(agent.incident_is_open(f"maa_issue|MAA1|{sig}"))
+
+    def test_task_chain_error_alerts_even_when_later_tasks_continue(self):
+        with isolated_agent({"enable_bark": True}):
+            now = datetime.now()
+            text = "\n".join([
+                f'[{now:%Y-%m-%d %H:%M:%S}.000][INF] Assistant::append_callback | TaskChainError {{"taskchain":"StartUp","taskid":1,"uuid":"device"}}',
+                f'[{(now+timedelta(seconds=1)):%Y-%m-%d %H:%M:%S}.000][INF] Assistant::append_callback | TaskChainStart {{"taskchain":"Recruit","taskid":2,"uuid":"device"}}',
+                f'[{(now+timedelta(seconds=2)):%Y-%m-%d %H:%M:%S}.000][INF] Assistant::append_callback | AllTasksCompleted {{"taskchain":"Recruit","finished_tasks":[1,2],"uuid":"device"}}',
+            ])
+            sent=[]
+            with patch.object(agent, "send_bark_payload", side_effect=lambda payload: sent.append(payload) or True):
+                agent.process_log_text("MAA2", Path("asst.log"), text)
+            self.assertEqual(len(sent), 1)
+            self.assertIn("启动", sent[0]["body"])
+            self.assertTrue(agent.load_pending_issues("MAA2")["issues"])
+
+    def test_terminal_connection_failure_is_not_downgraded_to_retry(self):
+        with isolated_agent({"enable_bark": True}):
+            now = datetime.now()
+            text = "\n".join([
+                f'[{now:%Y-%m-%d %H:%M:%S}.000][ERR] controller is unavailable: device offline',
+                f'[{(now+timedelta(seconds=1)):%Y-%m-%d %H:%M:%S}.000][INF] Assistant::append_callback | TaskChainError {{"taskchain":"Fight","taskid":8,"uuid":"device"}}',
+                f'[{(now+timedelta(seconds=2)):%Y-%m-%d %H:%M:%S}.000][INF] Assistant::append_callback | TaskChainStart {{"taskchain":"Award","taskid":9,"uuid":"device"}}',
+            ])
+            sent=[]
+            with patch.object(agent,"send_bark_payload",side_effect=lambda payload: sent.append(payload) or True):
+                agent.process_log_text("MAA1",Path("asst.log"),text)
+            self.assertEqual(len(sent),1)
+            self.assertIn("ADB",sent[0]["title"]+sent[0]["body"])
+            self.assertTrue(agent.load_pending_issues("MAA1")["issues"])
+
+    def test_subtask_error_is_silent_when_chain_later_completes(self):
+        with isolated_agent({"enable_bark": True}):
+            now = datetime.now()
+            text = "\n".join([
+                f'[{now:%Y-%m-%d %H:%M:%S}.000][INF] Assistant::append_callback | SubTaskError {{"taskchain":"Fight","taskid":3,"uuid":"device"}}',
+                f'[{(now+timedelta(seconds=1)):%Y-%m-%d %H:%M:%S}.000][INF] Assistant::append_callback | TaskChainCompleted {{"taskchain":"Fight","taskid":3,"uuid":"device"}}',
+                f'[{(now+timedelta(seconds=2)):%Y-%m-%d %H:%M:%S}.000][INF] Assistant::append_callback | AllTasksCompleted {{"taskchain":"Fight","finished_tasks":[3],"uuid":"device"}}',
+            ])
+            sent=[]
+            with patch.object(agent, "send_bark_payload", side_effect=lambda payload: sent.append(payload) or True):
+                agent.process_log_text("MAA1", Path("asst.log"), text)
+            self.assertEqual(len(sent), 0)
+            self.assertFalse(agent.load_pending_issues("MAA1")["issues"])
+
+    def test_schedule_run_state_completes_after_queue_finishes(self):
+        with isolated_agent():
+            now=datetime.now().replace(second=0,microsecond=0)
+            row={"label":"MAA1","datetime":now,"source":"test"}
+            text="\n".join([
+                f'[{now:%Y-%m-%d %H:%M:%S}.000][INF] Assistant::append_callback | TaskChainStart {{"taskchain":"StartUp","taskid":10,"uuid":"device"}}',
+                f'[{(now+timedelta(seconds=1)):%Y-%m-%d %H:%M:%S}.000][INF] Assistant::append_callback | SubTaskError {{"taskchain":"StartUp","taskid":10,"uuid":"device"}}',
+                f'[{(now+timedelta(seconds=2)):%Y-%m-%d %H:%M:%S}.000][INF] Assistant::append_callback | TaskChainCompleted {{"taskchain":"StartUp","taskid":10,"uuid":"device"}}',
+                f'[{(now+timedelta(seconds=3)):%Y-%m-%d %H:%M:%S}.000][INF] Assistant::append_callback | AllTasksCompleted {{"finished_tasks":[10],"taskchain":"StartUp","taskid":10,"uuid":"device"}}',
+            ])
+            with patch.object(agent,"match_schedule_start",return_value=row):
+                agent.process_log_text("MAA1",Path("asst.log"),text)
+            rec=agent.load_schedule_run_state()["runs"][agent.schedule_run_key("MAA1",now)]
+            self.assertEqual(rec["status"],"completed")
+            self.assertNotIn("error",rec)
+
+    def test_schedule_run_failure_survives_later_queue_completion(self):
+        with isolated_agent():
+            now=datetime.now().replace(second=0,microsecond=0)
+            row={"label":"MAA2","datetime":now,"source":"test"}
+            text="\n".join([
+                f'[{now:%Y-%m-%d %H:%M:%S}.000][INF] Assistant::append_callback | TaskChainStart {{"taskchain":"Fight","taskid":20,"uuid":"device"}}',
+                f'[{(now+timedelta(seconds=1)):%Y-%m-%d %H:%M:%S}.000][INF] Assistant::append_callback | TaskChainError {{"taskchain":"Fight","taskid":20,"uuid":"device"}}',
+                f'[{(now+timedelta(seconds=2)):%Y-%m-%d %H:%M:%S}.000][INF] Assistant::append_callback | AllTasksCompleted {{"finished_tasks":[20],"taskchain":"Fight","taskid":20,"uuid":"device"}}',
+            ])
+            with patch.object(agent,"match_schedule_start",return_value=row):
+                agent.process_log_text("MAA2",Path("asst.log"),text)
+            rec=agent.load_schedule_run_state()["runs"][agent.schedule_run_key("MAA2",now)]
+            self.assertEqual(rec["status"],"failed")
+            self.assertEqual(rec["error"]["task"],"自动清理智")
+            self.assertIn("正常完成",rec["error"]["summary"])
+
+    def test_offlineconfirm_in_candidate_list_is_not_a_failure(self):
+        with isolated_agent({"enable_bark": True}):
+            now = datetime.now()
+            text = "\n".join([
+                f'[{now:%Y-%m-%d %H:%M:%S}.000][INF] Assistant::append_callback | TaskChainStart {{"taskchain":"StartUp","taskid":214,"uuid":"device"}}',
+                f'[{(now+timedelta(seconds=1)):%Y-%m-%d %H:%M:%S}.000][INF] {{"details":{{"to_be_recognized":["StartUp@OfflineConfirm","StartButton"]}},"taskchain":"StartUp","taskid":214}}',
+                f'[{(now+timedelta(seconds=2)):%Y-%m-%d %H:%M:%S}.000][INF] Assistant::append_callback | TaskChainCompleted {{"taskchain":"StartUp","taskid":214,"uuid":"device"}}',
+            ])
+            sent=[]
+            with patch.object(agent,"send_bark_payload",side_effect=lambda payload: sent.append(payload) or True):
+                agent.process_log_text("MAA2",Path("asst.log"),text)
+            self.assertEqual(sent,[])
+            self.assertFalse(agent.load_pending_issues("MAA2")["issues"])
+
+    def test_login_failure_task_chain_stopped_alerts(self):
+        with isolated_agent({"enable_bark": True}):
+            now=datetime.now()
+            text="\n".join([
+                f'[{now:%Y-%m-%d %H:%M:%S}.000][INF] Assistant::append_callback | TaskChainStart {{"taskchain":"StartUp","taskid":206,"uuid":"device"}}',
+                f'[{(now+timedelta(seconds=1)):%Y-%m-%d %H:%M:%S}.000][INF] Assistant::append_callback | SubTaskStart {{"class":"asst::ProcessTask","details":{{"task":"OfflineConfirm"}},"taskchain":"StartUp","taskid":0,"uuid":"device"}}',
+                f'[{(now+timedelta(seconds=2)):%Y-%m-%d %H:%M:%S}.000][INF] Assistant::append_callback | SubTaskError {{"class":"asst::AccountSwitchTask","details":{{}},"taskchain":"StartUp","taskid":0,"uuid":"device"}}',
+                f'[{(now+timedelta(seconds=3)):%Y-%m-%d %H:%M:%S}.000][WRN] asst::StartUpTask::run | Login failed, entering game-restart loop',
+                f'[{(now+timedelta(seconds=4)):%Y-%m-%d %H:%M:%S}.000][INF] Assistant::append_callback | TaskChainStopped {{"taskchain":"StartUp","taskid":206,"uuid":"device"}}',
+            ])
+            sent=[]
+            with patch.object(agent,"send_bark_payload",side_effect=lambda payload: sent.append(payload) or True):
+                agent.process_log_text("MAA2",Path("asst.log"),text)
+            self.assertEqual(len(sent),1)
+            self.assertIn("离线",sent[0]["title"]+sent[0]["body"])
+            pending=agent.load_pending_issues("MAA2")["issues"]
+            self.assertTrue(pending)
+            self.assertTrue(all(x.get("alerted") for x in pending.values()))
+
+    def test_copilot_failure_is_not_suppressed_when_optional_notice_is_off(self):
+        with isolated_agent({"enable_bark":True,"copilot_notify_default":False}):
+            now=datetime.now(); text=f'[{now:%Y-%m-%d %H:%M:%S}.000][INF] Assistant::append_callback | TaskChainStopped {{"taskchain":"Copilot","taskid":44,"uuid":"device"}}'
+            sent=[]
+            with patch.object(agent,"send_bark_payload",side_effect=lambda payload: sent.append(payload) or True):
+                agent.process_log_text("MAA1",Path("asst.log"),text)
+            self.assertEqual(len(sent),1)
+            self.assertIn("自动战斗",sent[0]["body"])
+
+    def test_explicit_failure_alerts_before_same_chain_later_recovers(self):
+        with isolated_agent({"enable_bark": True}):
+            now = datetime.now()
+            text = "\n".join([
+                f'[{now:%Y-%m-%d %H:%M:%S}.000][INF] Assistant::append_callback | TaskChainError {{"taskchain":"Fight","taskid":10,"uuid":"device"}}',
+                f'[{(now+timedelta(seconds=1)):%Y-%m-%d %H:%M:%S}.000][INF] Assistant::append_callback | TaskChainCompleted {{"taskchain":"Fight","taskid":11,"uuid":"device"}}',
+            ])
+            sent=[]
+            with patch.object(agent, "send_bark_payload", side_effect=lambda payload: sent.append(payload) or True):
+                agent.process_log_text("MAA1", Path("asst.log"), text)
+            self.assertEqual(len(sent), 1, "an explicit task failure must never be hidden by a later success in the same read batch")
+            self.assertFalse(agent.load_pending_issues("MAA1")["issues"])
+
+    def test_captured_eight_chain_failure_shape_and_later_manual_recovery(self):
+        with isolated_agent({"enable_bark": True}):
+            now=datetime.now(); chains=["StartUp","Recruit","Infrast","Mall","Fight","Award","OperBox","Depot"]
+            failed=[f'[{(now+timedelta(seconds=i)):%Y-%m-%d %H:%M:%S}.000][INF] Assistant::append_callback | TaskChainError {{"taskchain":"{chain}","taskid":{156+i},"uuid":"device"}}' for i,chain in enumerate(chains)]
+            failed.extend([
+                f'[{(now+timedelta(seconds=9)):%Y-%m-%d %H:%M:%S}.000][INF] Assistant::append_callback | AllTasksCompleted {{"taskchain":"Depot","finished_tasks":[156,157,158,159,160,161,162,163],"uuid":"device"}}',
+                f'[{(now+timedelta(seconds=10)):%Y-%m-%d %H:%M:%S}.000][INF] Assistant::append_callback | TaskChainCompleted {{"taskchain":"CloseDown","taskid":164,"uuid":"device"}}',
+            ])
+            sent=[]
+            with patch.object(agent,"send_bark_payload",side_effect=lambda payload: sent.append(payload) or True):
+                agent.process_log_text("MAA2",Path("asst.log"),"\n".join(failed))
+            self.assertEqual(len(sent),1,"one broken batch should notify without sending eight Bark messages")
+            pending=agent.load_pending_issues("MAA2")["issues"]
+            self.assertEqual({x.get("chain") for x in pending.values()},set(chains))
+
+            recovered=[f'[{(now+timedelta(hours=2,seconds=i)):%Y-%m-%d %H:%M:%S}.000][INF] Assistant::append_callback | TaskChainCompleted {{"taskchain":"{chain}","taskid":{195+i},"uuid":"device"}}' for i,chain in enumerate(chains)]
+            with patch.object(agent,"send_bark_payload",return_value=True):
+                agent.process_log_text("MAA2",Path("asst.log"),"\n".join(recovered))
+            self.assertFalse(agent.load_pending_issues("MAA2")["issues"],"a later successful manual run should resolve each matching chain")
 
     def test_observed_run_removes_unverified_bookkeeping(self):
         with isolated_agent():

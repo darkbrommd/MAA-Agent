@@ -2,7 +2,7 @@ import json
 import sys
 import tempfile
 import unittest
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -33,6 +33,57 @@ class NewsMonitorTests(unittest.TestCase):
     def test_due_slot_is_stable_between_runs(self):
         now = datetime(2026, 9, 20, 21, 43)
         self.assertEqual(news_monitor.current_due_slot(now, ["00:05", "12:05"]), "2026-09-20T12:05")
+
+    def test_due_slot_accepts_24_hour_notation(self):
+        now = datetime(2026, 9, 21, 0, 6)
+        self.assertEqual(news_monitor.current_due_slot(now, ["24:05"]), "2026-09-21T00:05")
+
+    def test_article_cleanup_removes_site_navigation_and_builds_complete_summary(self):
+        title = "09月22日维护公告"
+        raw = (
+            f"{title} - 明日方舟 公告 {title} 2026 // 09 / 22 "
+            + "第一句用于介绍公告。" * 8
+            + "第二部分说明具体内容。" * 20
+            + " INFO 返回列表 GO BACK 返回首页 HOMEPAGE ARKNIGHTS INFORMATION"
+        )
+        cleaned = news_monitor.clean_article_text(raw)
+        summary = news_monitor.article_summary(cleaned, "被截断的摘要")
+        self.assertNotIn("返回列表", cleaned)
+        self.assertNotIn("HOMEPAGE", cleaned)
+        self.assertFalse(cleaned.startswith(title))
+        self.assertTrue(summary.endswith(("。", "！", "？", "；")))
+
+
+class GuiFormattingTests(unittest.TestCase):
+    def test_dashboard_log_cutoff_does_not_change_source_text(self):
+        text = "[2026-09-22 00:10:00] old\n[2026-09-22 00:11:00] new"
+        filtered = maa_agent_gui.log_text_after(text, datetime(2026, 9, 22, 0, 10, 30))
+        self.assertEqual(filtered, "[2026-09-22 00:11:00] new")
+        self.assertIn("old", text)
+
+    def test_only_earliest_future_occurrence_is_marked_next(self):
+        now=datetime(2026,9,26,20,0)
+        rows=[
+            {"label":"MAA1","datetime":now+timedelta(hours=2)},
+            {"label":"MAA2","datetime":now+timedelta(hours=4)},
+            {"label":"MAA1","datetime":now-timedelta(hours=2)},
+        ]
+        self.assertEqual(
+            maa_agent_gui.next_schedule_keys(rows,now),
+            {maa_agent_gui.schedule_occurrence_key("MAA1",now+timedelta(hours=2))},
+        )
+
+    def test_schedule_card_uses_terminal_run_state(self):
+        app=object.__new__(maa_agent_gui.ManagerApp)
+        app.cfg={"gui_dark_mode":True}; app.palette=maa_agent_gui.PALETTES["dark"]
+        app._daily_state=lambda _day: {}
+        now=datetime(2026,9,26,20,0); row={"label":"MAA1","datetime":now}
+        key=maa_agent_gui.schedule_occurrence_key("MAA1",now)
+        failed={key:{"status":"failed","error":{"title":"自动清理智失败"}}}
+        self.assertEqual(app._schedule_card_state(row,now,{},failed)[2],"failed")
+        running={key:{"status":"running","updated_at":now.strftime("%Y-%m-%d %H:%M:%S"),"current_task":"基建"}}
+        self.assertEqual(app._schedule_card_state(row,now,{},running)[0],"正在进行")
+        self.assertNotEqual(app._card_background("failed"),app._card_background("running"))
 
 
 class PersistentDetectorTests(unittest.TestCase):

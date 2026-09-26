@@ -63,6 +63,7 @@ HEARTBEAT_STATE_FILE = STATE_DIR / "heartbeat_state.json"
 NETWORK_HEALTH_FILE = STATE_DIR / "network_health.json"
 HUNG_STATE_FILE = STATE_DIR / "hung_windows.json"
 SCHEDULE_CACHE_FILE = STATE_DIR / "schedule_cache.json"
+SCHEDULE_RUN_STATE_FILE = STATE_DIR / "schedule_run_status.json"
 GENERIC_ISSUE_DIR = STATE_DIR / "issue_tracker"
 GENERIC_ISSUE_DIR.mkdir(exist_ok=True)
 
@@ -916,6 +917,110 @@ def match_schedule_start(label, actual_dt, chain=None, source="callback"):
         mark_observed_run(label, row["datetime"], actual_dt=actual_dt, chain=chain, source=source if row.get("source")!="schedule_cache" else "schedule_cache+callback")
         return row
     return None
+
+
+def schedule_run_key(label, scheduled_dt):
+    occurrence = scheduled_dt if isinstance(scheduled_dt, str) else scheduled_dt.strftime("%Y-%m-%d %H:%M")
+    return f"{label}|{occurrence}"
+
+
+def load_schedule_run_state():
+    try:
+        if SCHEDULE_RUN_STATE_FILE.exists():
+            data=json.loads(SCHEDULE_RUN_STATE_FILE.read_text(encoding="utf-8"))
+            if isinstance(data,dict) and isinstance(data.get("runs"),dict):
+                return data
+    except Exception:
+        pass
+    return {"runs":{}}
+
+
+def save_schedule_run_state(data):
+    runs=data.setdefault("runs",{})
+    cutoff=datetime.now()-timedelta(days=45)
+    for key,rec in list(runs.items()):
+        try:
+            occurrence=datetime.strptime(str(rec.get("occurrence")),"%Y-%m-%d %H:%M")
+        except Exception:
+            occurrence=None
+        if occurrence is None or occurrence < cutoff:
+            runs.pop(key,None)
+    if len(runs)>240:
+        keep=sorted(runs,key=lambda key:str(runs[key].get("occurrence","")))[-240:]
+        data["runs"]={key:runs[key] for key in keep}
+    temp=SCHEDULE_RUN_STATE_FILE.with_suffix(".json.tmp")
+    temp.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding="utf-8")
+    temp.replace(SCHEDULE_RUN_STATE_FILE)
+
+
+def _active_schedule_run(data,label):
+    rows=[rec for rec in data.get("runs",{}).values()
+          if rec.get("label")==label and rec.get("status")=="running"]
+    return max(rows,key=lambda rec:str(rec.get("occurrence",""))) if rows else None
+
+
+def mark_schedule_run_started(label,row,event_dt,chain=None,payload=None):
+    scheduled_dt=row.get("datetime")
+    if not isinstance(scheduled_dt,datetime):
+        return None
+    data=load_schedule_run_state(); runs=data.setdefault("runs",{}); key=schedule_run_key(label,scheduled_dt)
+    rec=runs.get(key)
+    # Later task chains and the separate CloseDown queue can still match the
+    # same clock occurrence. Never reopen a run whose queue already ended.
+    if rec and rec.get("status") in {"completed","failed"}:
+        return rec
+    payload=payload if isinstance(payload,dict) else {}
+    rec=rec or {
+        "key":key,"label":label,"occurrence":scheduled_dt.strftime("%Y-%m-%d %H:%M"),
+        "scheduled_at":scheduled_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        "started_at":event_dt.strftime("%Y-%m-%d %H:%M:%S"),"status":"running",
+        "taskids":[],
+    }
+    rec["status"]="running"; rec["updated_at"]=event_dt.strftime("%Y-%m-%d %H:%M:%S")
+    rec["current_chain"]=chain; rec["current_task"]=readable_chain_name(chain) if chain else "当前任务"
+    taskid=payload.get("taskid")
+    if taskid is not None and taskid not in rec.setdefault("taskids",[]):
+        rec["taskids"].append(taskid)
+    if payload.get("uuid"): rec["uuid"]=payload.get("uuid")
+    runs[key]=rec; save_schedule_run_state(data); return rec
+
+
+def update_schedule_run_progress(label,event_dt,callback,chain=None,payload=None):
+    data=load_schedule_run_state(); rec=_active_schedule_run(data,label)
+    if not rec:
+        return None
+    payload=payload if isinstance(payload,dict) else {}
+    rec["updated_at"]=event_dt.strftime("%Y-%m-%d %H:%M:%S")
+    rec["last_callback"]=callback
+    if chain:
+        rec["current_chain"]=chain; rec["current_task"]=readable_chain_name(chain)
+    taskid=payload.get("taskid")
+    if taskid is not None and taskid not in rec.setdefault("taskids",[]):
+        rec["taskids"].append(taskid)
+    if callback=="AllTasksCompleted":
+        rec["status"]="completed"; rec["completed_at"]=event_dt.strftime("%Y-%m-%d %H:%M:%S")
+        rec["current_chain"]=None; rec["current_task"]=None
+    save_schedule_run_state(data); return rec
+
+
+def mark_schedule_run_failed(label,event_dt,callback,chain,diagnosis,payload=None):
+    data=load_schedule_run_state(); rec=_active_schedule_run(data,label)
+    if not rec:
+        return None
+    diagnosis=diagnosis or {}
+    rec["status"]="failed"; rec["updated_at"]=event_dt.strftime("%Y-%m-%d %H:%M:%S")
+    rec["failed_at"]=event_dt.strftime("%Y-%m-%d %H:%M:%S")
+    rec["current_chain"]=chain; rec["current_task"]=readable_chain_name(chain) if chain else "当前任务"
+    rec["last_callback"]=callback
+    rec["error"]={
+        "title":diagnosis.get("title") or "任务执行失败",
+        "summary":diagnosis.get("happened") or f"{rec['current_task']}没有正常完成。",
+        "likely":diagnosis.get("likely") or "界面识别、连接或游戏状态异常。",
+        "action":diagnosis.get("action") or "远程检查当前游戏画面和 MAA 状态。",
+        "task":diagnosis.get("task") or rec["current_task"],
+        "chain":chain,"callback":callback,"time":rec["failed_at"],
+    }
+    save_schedule_run_state(data); return rec
 
 def _agent_script_from_cmdline(cmdline, cwd=None):
     return script_from_cmdline(cmdline, cwd)
@@ -1837,17 +1942,25 @@ def process_log_text(label,path,text,backfill_only=False):
     for i,record in enumerate(records):
         cb=record.get("callback"); chain=record.get("chain"); event_dt=record.get("time") or datetime.now()
         if cb=="TaskChainStart":
-            match_schedule_start(label,event_dt,chain=chain,source="callback")
+            matched=match_schedule_start(label,event_dt,chain=chain,source="callback")
+            if matched and not backfill_only:
+                mark_schedule_run_started(label,matched,event_dt,chain,record.get("payload"))
         if backfill_only or not cb:
             continue
         if chain: update_taskchain_count(label,chain,cb)
+        if cb in {"TaskChainCompleted","AllTasksCompleted"}:
+            update_schedule_run_progress(label,event_dt,cb,chain,record.get("payload"))
+        context=None; d=None
+        if cb in {"InternalError","InitFailed","TaskChainError","TaskChainStopped","SubTaskError","SubTaskStopped"}:
+            context=_context_for_record(records,i)
+            d=diagnose_maa_event(context,cb,chain)
+            if cb in {"InternalError","InitFailed","TaskChainError","TaskChainStopped"} and d and d.get("mode")!="suppress":
+                mark_schedule_run_failed(label,event_dt,cb,chain,d,record.get("payload"))
         if notify_copilot_record_if_needed(label,path,record):
             continue
         resolve_pending_on_progress(label,event_dt,cb,chain)
         if cb not in {"InternalError","InitFailed","TaskChainError","TaskChainStopped","SubTaskError","SubTaskStopped"}:
             continue
-        context=_context_for_record(records,i)
-        d=diagnose_maa_event(context,cb,chain)
         if not d: continue
         mode=d.get("mode")
         if mode=="suppress":

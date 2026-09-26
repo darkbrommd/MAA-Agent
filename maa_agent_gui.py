@@ -1315,10 +1315,31 @@ class ManagerApp:
         except Exception:
             return {}
 
-    def _schedule_card_state(self, row: dict, now: datetime, daily_cache: dict[date, dict]) -> tuple[str, str, str]:
+    def _schedule_card_state(self, row: dict, now: datetime, daily_cache: dict[date, dict],
+                             run_cache: dict[str, dict] | None = None, *, is_next: bool = False) -> tuple[str, str, str]:
         when = row["datetime"]
         if row.get("skipped"):
             return "已关闭", "本次不纳入运行监测", "off"
+        run_cache=run_cache or {}
+        run=run_cache.get(schedule_occurrence_key(str(row["label"]),when)) or {}
+        run_status=run.get("status")
+        if run_status=="failed":
+            error=run.get("error") or {}
+            return "运行失败", str(error.get("title") or "任务没有正常完成"), "failed"
+        if run_status=="running":
+            try:
+                updated=datetime.strptime(str(run.get("updated_at")),"%Y-%m-%d %H:%M:%S")
+                fresh=timedelta(minutes=-5) <= now-updated <= timedelta(hours=6)
+            except Exception:
+                fresh=False
+            if fresh:
+                task=str(run.get("current_task") or "任务队列")
+                return "正在进行", f"当前：{task}", "running"
+            return "状态待确认", "运行记录长时间没有终态", "off"
+        if run_status=="completed":
+            completed=str(run.get("completed_at") or "")
+            suffix=f" · {completed[11:16]} 完成" if len(completed)>=16 else ""
+            return "已完成", f"任务队列已正常结束{suffix}", "done"
         daily = daily_cache.setdefault(when.date(), self._daily_state(when.date()))
         expected = when.strftime("%Y-%m-%d %H:%M")
         observed = (daily.get("observed_runs") or {}).get(row["label"], [])
@@ -1331,12 +1352,46 @@ class ManagerApp:
             return "无法核验", "当时 Agent 尚未覆盖该监测时段", "off"
         if when <= now:
             return "等待核验", "尚未收到本次启动证据", "off"
-        return "等待运行", "已加入后续监测", "next"
+        if is_next:
+            return "下一个计划", "即将执行", "next"
+        return "等待运行", "已加入后续监测", "future"
+
+    def _schedule_error_info(self, row: dict, run_cache: dict[str, dict]) -> dict:
+        when=row["datetime"]
+        run=run_cache.get(schedule_occurrence_key(str(row["label"]),when)) or {}
+        if run.get("status")=="failed":
+            return dict(run.get("error") or {})
+        expected=when.strftime("%Y-%m-%d %H:%M")
+        digest=hashlib.sha1(f"{row['label']}|{expected}".encode("utf-8",errors="ignore")).hexdigest()
+        if (STATE_DIR/f"scheduled_alert_{digest}.txt").exists():
+            return {
+                "title":"未检测到计划启动",
+                "summary":f"{self._display_instance(str(row['label']))} 在 {when:%Y-%m-%d %H:%M} 没有检测到启动证据。",
+                "likely":"计划未触发、MAA/MuMu 已退出，或上一轮任务仍在运行。",
+                "action":"检查 MAA 定时器、程序状态以及对应时段的 Agent 日志。",
+                "task":"计划启动监测","time":expected,
+            }
+        return {}
+
+    def show_schedule_error(self, row: dict, error: dict) -> None:
+        when=row["datetime"]
+        text=(f"实例：{self._display_instance(str(row['label']))}\n"
+              f"计划时间：{when:%Y-%m-%d %H:%M}\n"
+              f"失败任务：{error.get('task') or '当前任务'}\n"
+              f"失败时间：{error.get('time') or '未知'}\n\n"
+              f"发生了什么：{error.get('summary') or error.get('title') or '任务没有正常完成。'}\n\n"
+              f"可能原因：{error.get('likely') or '没有更多可靠证据。'}\n\n"
+              f"建议操作：{error.get('action') or '检查当前游戏画面与 MAA 日志。'}")
+        messagebox.showerror(str(error.get("title") or "运行错误详情"),text,parent=self.root)
 
     def _card_background(self, state: str) -> str:
         dark = self.cfg.get("gui_dark_mode", True)
         if state == "failed":
             return "#3a2529" if dark else "#f9e0e3"
+        if state == "running":
+            return "#3b3420" if dark else "#fff1c2"
+        if state == "next":
+            return "#203a2a" if dark else "#dff3e5"
         if state in {"done", "off"}:
             return "#252d36" if dark else "#e3e8ed"
         return self.palette["panel"]
@@ -1351,6 +1406,8 @@ class ManagerApp:
         container._schedule_row_widgets = []
         now = datetime.now()
         daily_cache: dict[date, dict] = {}
+        run_cache=load_schedule_run_records()
+        next_keys=next_schedule_keys(rows,now,run_cache)
         previous_day = None
         if not rows:
             ttk.Label(container.body, text="这个时间范围内没有启用的计划。", style="Muted.TLabel", padding=14).pack(fill="x")
@@ -1369,12 +1426,19 @@ class ManagerApp:
                 day_label.pack(fill="x")
                 container._schedule_day_widgets.append(day_label)
                 previous_day = when.date()
-            status, detail, state = self._schedule_card_state(row, now, daily_cache)
+            row_key=schedule_occurrence_key(str(row["label"]),when)
+            status, detail, state = self._schedule_card_state(
+                row,now,daily_cache,run_cache,is_next=row_key in next_keys
+            )
             background = self._card_background(state)
             card = tk.Frame(container.body, background=background, bd=0, highlightthickness=1, highlightbackground=self.palette["grid"])
             card.pack(fill="x", padx=4, pady=4)
             if state == "failed":
                 rail_color = self.palette["bad"]
+            elif state == "running":
+                rail_color = self.palette["warning"]
+            elif state == "next":
+                rail_color = self.palette["good"]
             elif when <= now or state == "off":
                 rail_color = "#66717d" if self.cfg.get("gui_dark_mode", True) else "#1f2937"
             else:
@@ -1410,7 +1474,9 @@ class ManagerApp:
                 wraplength=300 if compact else 460,
             )
             source_label.grid(row=1, column=2, sticky="w", padx=(16, 8))
-            status_color = self.palette["bad"] if state == "failed" else (self.palette["good"] if state == "next" else self.palette["muted"])
+            status_color = (self.palette["bad"] if state == "failed" else
+                            self.palette["warning"] if state == "running" else
+                            self.palette["good"] if state == "next" else self.palette["muted"])
             status_label = tk.Label(content, text=status, background=background, foreground=status_color, font=("Microsoft YaHei UI", 10, "bold"))
             status_label.grid(row=0, column=3, sticky="e", padx=(8, 0))
             detail_label = tk.Label(content, text=detail, background=background, foreground=self.palette["muted"], font=("Microsoft YaHei UI", 8), justify="right", wraplength=150 if compact else 220)
@@ -1418,7 +1484,12 @@ class ManagerApp:
             content.columnconfigure(2, weight=1, minsize=180 if compact else 260)
             content.columnconfigure(3, minsize=130 if compact else 180)
             if not compact:
-                ttk.Button(content, text="修改时间", command=lambda item=row: self.move_occurrence(item)).grid(row=0, column=4, rowspan=2, padx=(12, 0))
+                actions=tk.Frame(content,background=background)
+                actions.grid(row=0,column=4,rowspan=2,padx=(12,0),sticky="e")
+                error_info=self._schedule_error_info(row,run_cache) if state=="failed" else {}
+                if error_info:
+                    ttk.Button(actions,text="查看错误",command=lambda item=row,info=error_info:self.show_schedule_error(item,info)).pack(fill="x",pady=(0,4))
+                ttk.Button(actions,text="修改时间",command=lambda item=row:self.move_occurrence(item)).pack(fill="x")
             self._bind_card_action(
                 [card, content, time_label, name_label, source_label, status_label, detail_label],
                 lambda _event, item=row: self.move_occurrence(item),
@@ -1430,10 +1501,16 @@ class ManagerApp:
     def _schedule_rows_signature(self, rows: list[dict]) -> tuple:
         now = datetime.now()
         daily_cache: dict[date, dict] = {}
+        run_cache=load_schedule_run_records()
+        next_keys=next_schedule_keys(rows,now,run_cache)
         signature = []
         for row in rows:
-            status, detail, state = self._schedule_card_state(row, now, daily_cache)
+            row_key=schedule_occurrence_key(str(row["label"]),row["datetime"])
+            status, detail, state = self._schedule_card_state(
+                row,now,daily_cache,run_cache,is_next=row_key in next_keys
+            )
             override = row.get("override") or {}
+            error=(run_cache.get(row_key) or {}).get("error") or {}
             signature.append((
                 str(row.get("label", "")),
                 row["datetime"].isoformat(timespec="minutes"),
@@ -1443,6 +1520,8 @@ class ManagerApp:
                 status,
                 detail,
                 state,
+                str(error.get("title","")),
+                str(error.get("summary","")),
             ))
         return tuple(signature)
 
