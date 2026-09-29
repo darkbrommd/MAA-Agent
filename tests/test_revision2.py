@@ -171,7 +171,7 @@ class ScheduleUtilsTests(unittest.TestCase):
     def test_move_override_more_than_one_day_does_not_disappear(self):
         with tempfile.TemporaryDirectory() as td:
             base=Path(td)
-            cfg={"maa_schedule":{"MAA1":["22:00"]},"schedule_override_file":"state/overrides.json"}
+            cfg={"maa_schedule":{"MAA1":["22:00"]},"schedule_override_file":"state/overrides.json","schedule_override_keep_days":3650}
             original=datetime(2026,9,20,22,0)
             target=datetime(2026,9,25,23,30)
             schedule_utils.add_override(base,cfg,"MAA1",original,"move",target)
@@ -185,7 +185,7 @@ class ScheduleUtilsTests(unittest.TestCase):
     def test_skip_and_cross_midnight_move_overrides(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
-            cfg = {"maa_schedule": {"MAA1": ["22:00"]}, "schedule_override_file": "state/overrides.json"}
+            cfg = {"maa_schedule": {"MAA1": ["22:00"]}, "schedule_override_file": "state/overrides.json", "schedule_override_keep_days": 3650}
             original = datetime(2026, 9, 20, 22, 0)
             schedule_utils.add_override(base, cfg, "MAA1", original, "move", datetime(2026, 9, 21, 1, 30))
             rows, _ = schedule_utils.effective_occurrences(base, cfg, datetime(2026, 9, 20, 20), datetime(2026, 9, 21, 2))
@@ -433,7 +433,7 @@ class AgentLogicTests(unittest.TestCase):
             self.assertGreaterEqual(agent.expected_schedule_count_today(now), 1)
 
     def test_skipped_override_is_not_marked_observed(self):
-        with isolated_agent({"maa_schedule": {"MAA1": ["10:00"]}}) as base:
+        with isolated_agent({"maa_schedule": {"MAA1": ["10:00"]}, "schedule_override_keep_days":3650}) as base:
             dt = datetime(2026, 9, 20, 10, 0)
             schedule_utils.add_override(base, agent.cfg, "MAA1", dt, "skip")
             row = agent.match_schedule_start("MAA1", dt + timedelta(minutes=1), chain="Fight")
@@ -535,7 +535,7 @@ class AgentLogicTests(unittest.TestCase):
 
 
     def test_manual_skip_resolves_existing_schedule_incident(self):
-        with isolated_agent({"maa_schedule":{"MAA1":["10:00"]},"enable_scheduled_run_check":True,"scheduled_run_grace_minutes":20}) as base:
+        with isolated_agent({"maa_schedule":{"MAA1":["10:00"]},"enable_scheduled_run_check":True,"scheduled_run_grace_minutes":20,"schedule_override_keep_days":3650}) as base:
             FrozenDateTime.current=datetime(2026,9,20,10,30)
             key="schedule|MAA1|2026-09-20 10:00"
             with patch.object(agent,"datetime",FrozenDateTime):
@@ -547,7 +547,7 @@ class AgentLogicTests(unittest.TestCase):
             self.assertFalse(agent.incident_is_open(key))
 
     def test_manual_move_resolves_old_incident_but_keeps_new_target_expected(self):
-        with isolated_agent({"maa_schedule":{"MAA1":["10:00"]},"enable_scheduled_run_check":True,"scheduled_run_grace_minutes":20}) as base:
+        with isolated_agent({"maa_schedule":{"MAA1":["10:00"]},"enable_scheduled_run_check":True,"scheduled_run_grace_minutes":20,"schedule_override_keep_days":3650}) as base:
             FrozenDateTime.current=datetime(2026,9,20,10,30)
             original=datetime(2026,9,20,10,0); target=datetime(2026,9,20,11,0)
             key="schedule|MAA1|2026-09-20 10:00"
@@ -613,7 +613,7 @@ class AgentLogicTests(unittest.TestCase):
             self.assertEqual(calls,[])
 
     def test_skipped_schedule_is_not_reported_missing(self):
-        with isolated_agent({"maa_schedule":{"MAA1":["10:00"]},"enable_scheduled_run_check":True,"scheduled_run_grace_minutes":20}) as base:
+        with isolated_agent({"maa_schedule":{"MAA1":["10:00"]},"enable_scheduled_run_check":True,"scheduled_run_grace_minutes":20,"schedule_override_keep_days":3650}) as base:
             schedule_utils.add_override(base,agent.cfg,"MAA1",datetime(2026,9,20,10,0),"skip")
             FrozenDateTime.current = datetime(2026, 9, 20, 10, 30)
             calls=[]
@@ -677,6 +677,26 @@ class AgentLogicTests(unittest.TestCase):
             with patch.object(agent.requests,"get",return_value=Resp(204)):
                 agent.check_proxy_health()
             self.assertFalse(agent.incident_is_open("network|proxy"))
+
+    def test_disabled_proxy_healthcheck_does_not_read_or_probe_proxy(self):
+        with isolated_agent({"enable_proxy_healthcheck":False}), \
+             patch.object(agent,"windows_system_http_proxy",side_effect=AssertionError("proxy settings must not be read")), \
+             patch.object(agent.requests,"get",side_effect=AssertionError("network probe must not run")):
+            agent.check_proxy_health()
+            self.assertFalse(agent.NETWORK_HEALTH_FILE.exists())
+
+    def test_startup_snapshot_respects_disabled_proxy_healthcheck(self):
+        class Mem:
+            percent=42
+            available=32*1024*1024*1024
+            total=64*1024*1024*1024
+        with isolated_agent({"enable_proxy_healthcheck":False,"maa_instance_dirs":{}}), \
+             patch.object(agent,"find_processes",side_effect=[[object(),object()],[object()]]), \
+             patch.object(agent,"detect_maa_instance_processes",return_value=({},[])), \
+             patch.object(agent.psutil,"virtual_memory",return_value=Mem()), \
+             patch.object(agent,"windows_system_http_proxy",side_effect=AssertionError("proxy settings must not be read")):
+            text=agent.startup_status_text()
+        self.assertIn("健康检查已关闭",text)
 
     def test_heartbeat_http_error_is_not_recorded_as_ok(self):
         with isolated_agent({"heartbeat_url":"https://example.invalid/ping","heartbeat_interval_minutes":1}):

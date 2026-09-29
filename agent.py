@@ -2686,10 +2686,13 @@ def startup_status_text():
     except Exception:
         mem_text = "状态读取失败"
 
-    try:
-        proxy_text = "已检测到系统代理" if windows_system_http_proxy() else "未检测到系统 HTTP 代理"
-    except Exception:
-        proxy_text = "状态读取失败"
+    if not cfg.get("enable_proxy_healthcheck", True):
+        proxy_text = "健康检查已关闭"
+    else:
+        try:
+            proxy_text = "已检测到系统代理" if windows_system_http_proxy() else "未检测到系统 HTTP 代理"
+        except Exception:
+            proxy_text = "状态读取失败"
 
     return (f"时间：{now_str()}\n"
             "初始状态：\n"

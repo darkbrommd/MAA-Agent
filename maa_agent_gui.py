@@ -60,6 +60,7 @@ CONFIG_HELP = {
     "maa_gui_config_paths": "只读 MAA 的定时器配置，用来展示和核对计划；管理器不会在 MAA 运行时覆盖它。",
     "schedule_override_file": "本管理器的一次性监测例外。它改变报警预期，不会阻止 MAA 自己启动。",
     "quiet_startup": "开启后，Agent 正常启动时不发 Bark；事故通知不受影响。",
+    "enable_proxy_healthcheck": "关闭后不读取系统代理，也不发起外网健康探测；适合临时停用 VPN/代理时使用。",
     "launch_paths": "GUI 一键启动及可选的随 Agent 启动路径。",
 }
 
@@ -518,6 +519,7 @@ class ManagerApp:
         self._schedule_restoring = False
         self.schedule_calendar_dialog = None
         self.setting_switches: list[ToggleSwitch] = []
+        self.proxy_check_var = tk.BooleanVar()
         self.resource_day = datetime.now().date()
         self.resource_rows: list[dict] = []
         self.timing_vars: dict[str, tk.StringVar] = {}
@@ -875,7 +877,9 @@ class ManagerApp:
         self._toggle_field(behavior,"深色模式（含资源图表）",self.dark_mode_var).grid(row=1,column=1,sticky="ew",pady=4)
         self._toggle_field(behavior,"启用内存压力报警",self.memory_alert_var).grid(row=2,column=0,sticky="ew",padx=(0,24),pady=4)
         ttk.Label(behavior,text="关闭后仍记录资源历史，但不会发送内存压力通知。",style="Muted.TLabel").grid(row=2,column=1,sticky="w",pady=4)
-        ttk.Label(behavior,text="任务栏固定由 Windows 管理：桌面和开始菜单快捷方式已创建，可右键它选择“固定到任务栏”。",style="Muted.TLabel").grid(row=3,column=0,columnspan=2,sticky="w",pady=(8,0))
+        self._toggle_field(behavior,"启用系统代理健康检查",self.proxy_check_var).grid(row=3,column=0,sticky="ew",padx=(0,24),pady=4)
+        ttk.Label(behavior,text="关闭后 Agent 不读取代理配置，也不发起外网探测；不影响其他监控。",style="Muted.TLabel").grid(row=3,column=1,sticky="w",pady=4)
+        ttk.Label(behavior,text="任务栏固定由 Windows 管理：桌面和开始菜单快捷方式已创建，可右键它选择“固定到任务栏”。",style="Muted.TLabel").grid(row=4,column=0,columnspan=2,sticky="w",pady=(8,0))
 
         apps = ttk.LabelFrame(settings_body, text="实例别名、程序路径与随 Agent 启动", padding=12)
         apps.pack(fill="x", pady=(12,0))
@@ -936,7 +940,6 @@ class ManagerApp:
         self.enable_daily_var = tk.BooleanVar()
         self.daily_time_var = tk.StringVar()
         self.deepseek_daily_var = tk.BooleanVar()
-        self.proxy_check_var = tk.BooleanVar()
         self._toggle_field(report, "启用每日报告", self.enable_daily_var).grid(row=0, column=0, sticky="ew", padx=(0, 16))
         ttk.Label(report, text="发送时间（HH:MM）").grid(row=0, column=1, sticky="e")
         ttk.Entry(report, textvariable=self.daily_time_var, width=9).grid(row=0, column=2, sticky="w", padx=(6, 18))
@@ -2012,6 +2015,7 @@ class ManagerApp:
         self.start_minimized_var.set(bool(self.cfg.get("gui_start_minimized",True)))
         self.dark_mode_var.set(bool(self.cfg.get("gui_dark_mode",True)))
         self.memory_alert_var.set(bool(self.cfg.get("enable_memory_alert",True)))
+        self.proxy_check_var.set(bool(self.cfg.get("enable_proxy_healthcheck",True)))
         paths=self.cfg.get("launch_paths") or {}; autos=self.cfg.get("auto_start_apps_with_agent") or {}
         for label in self.launch_path_vars:
             self.launch_path_vars[label].set(str(paths.get(label,""))); self.autostart_vars[label].set(bool(autos.get(label,False)))
@@ -2065,6 +2069,7 @@ class ManagerApp:
         self.cfg["gui_start_minimized"]=self.start_minimized_var.get()
         self.cfg["gui_dark_mode"]=self.dark_mode_var.get()
         self.cfg["enable_memory_alert"]=self.memory_alert_var.get()
+        self.cfg["enable_proxy_healthcheck"]=self.proxy_check_var.get()
         self.cfg["launch_paths"]={k:v.get().strip() for k,v in self.launch_path_vars.items()}
         self.cfg["auto_start_apps_with_agent"]={k:v.get() for k,v in self.autostart_vars.items()}
         self.cfg["maa_instance_aliases"]={k:v.get().strip() for k,v in self.instance_alias_vars.items()}

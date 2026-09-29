@@ -38,6 +38,7 @@
   "check_interval_seconds": 60,
   "process_missing_sustain_minutes": 3,
   "enable_memory_alert": true,
+  "enable_proxy_healthcheck": true,
   "memory_pressure_percent": 88,
   "memory_critical_percent": 95,
   "memory_pressure_sustain_minutes": 30,
