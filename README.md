@@ -1,7 +1,7 @@
 <div align="center">
   <img src="assets/app_icon.png" width="128" alt="MAA Agent 图标">
   <h1>MAA Agent</h1>
-  <p>监控 MAA、分析异常，并把每日摘要送到手机的 Windows 桌面助手</p>
+  <p>监控 MAA、分析异常，并把每日摘要送到手机的每日清杂助手</p>
 
   [![Release](https://img.shields.io/github/v/release/darkbrommd/MAA-Agent?display_name=tag&style=flat-square)](https://github.com/darkbrommd/MAA-Agent/releases/latest)
   [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat-square&logo=windows)](https://github.com/darkbrommd/MAA-Agent/releases/latest)
