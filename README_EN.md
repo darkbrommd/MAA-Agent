@@ -1,7 +1,7 @@
 <div align="center">
   <img src="assets/app_icon.png" width="128" alt="MAA Agent icon">
   <h1>MAA Agent</h1>
-  <p>A Windows desktop app that keeps an eye on your MAA</p>
+  <p>A Windows desktop companion that monitors MAA, explains what needs attention, and sends a daily summary to your phone</p>
 
   [![Release](https://img.shields.io/github/v/release/darkbrommd/MAA-Agent?display_name=tag&style=flat-square)](https://github.com/darkbrommd/MAA-Agent/releases/latest)
   [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat-square&logo=windows)](https://github.com/darkbrommd/MAA-Agent/releases/latest)
@@ -12,7 +12,7 @@
 
 ---
 
-MAA Agent runs in the background and checks whether MAA starts its scheduled work. One window brings together upcoming runs, resource usage, official notices, and recent logs. It can also send Bark reminders when MAA is not running, a task does not start on time, or memory and disk space are running low.
+MAA Agent does more than check whether MAA runs on schedule. It brings task status, resource trends, official notices, and recent logs into one window. With DeepSeek enabled, the daily report adds a short analysis—a conclusion, resource trend, run quality, and a suggestion—when something noteworthy comes up. With Bark configured, that report goes to your phone.
 
 It manages **one MAA installation by default**. For most users, setup is just choosing the MAA folder in the first-run wizard. A second MAA can be added during setup if needed.
 
@@ -25,7 +25,7 @@ It manages **one MAA installation by default**. For most users, setup is just ch
 | 🗓️ | Schedule | See upcoming runs and whether they are running, completed, or failed. |
 | 🔔 | Reminders | Use Bark when MAA is not running, a task is late, or system resources are low. |
 | 📊 | Resources | Review CPU, memory, disk, MAA, and MuMu history. |
-| 📝 | Daily report | A daily summary of scheduled runs, resource trends, and open issues, delivered through Bark. With DeepSeek enabled, it can add a short analysis when something needs a closer look. |
+| 📝 | Daily report & AI analysis | Summarizes scheduled runs, resource trends, and open issues each day. With DeepSeek enabled, it analyzes noteworthy issues and adds a conclusion and suggested next steps; with Bark configured, the report goes to your phone. |
 | 📰 | Notices | Read new official Arknights notices and detect maintenance windows. |
 | 🧰 | Controls | Start, stop, and inspect the Agent from the desktop window or tray; one or two MAA installations are supported. |
 

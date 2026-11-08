@@ -1,7 +1,7 @@
 <div align="center">
   <img src="assets/app_icon.png" width="128" alt="MAA Agent 图标">
   <h1>MAA Agent</h1>
-  <p>帮你照看 MAA 运行情况的 Windows 桌面程序</p>
+  <p>监控 MAA、分析异常，并把每日摘要送到手机的 Windows 桌面助手</p>
 
   [![Release](https://img.shields.io/github/v/release/darkbrommd/MAA-Agent?display_name=tag&style=flat-square)](https://github.com/darkbrommd/MAA-Agent/releases/latest)
   [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat-square&logo=windows)](https://github.com/darkbrommd/MAA-Agent/releases/latest)
@@ -12,7 +12,7 @@
 
 ---
 
-MAA Agent 会在后台查看 MAA 有没有按计划运行，并把日程、资源占用、官网公告和最近日志集中显示在一个窗口里。任务没有按时开始、MAA 意外退出，或者电脑内存与磁盘空间不足时，也可以通过 Bark 发提醒到手机。
+MAA Agent 不只看 MAA 有没有按计划运行。它把任务状态、资源趋势、官网公告和最近日志集中到一个窗口。开启 DeepSeek 后，日报会在出现值得关注的问题或资源压力时，自动生成一段包含结论、资源趋势、运行质量和建议的简短分析；配置 Bark 后，这份日报会推送到手机。
 
 默认管理 **一个 MAA**，大多数用户跟着首次向导选择 MAA 文件夹即可。如果你同时运行两个 MAA，也可以在向导中选择双实例。
 
@@ -25,7 +25,7 @@ MAA Agent 会在后台查看 MAA 有没有按计划运行，并把日程、资�
 | 🗓️ | 看日程 | 集中查看接下来要运行的任务，以及运行中、完成或失败的状态。 |
 | 🔔 | 发提醒 | MAA 没有运行、任务没有按时开始或电脑资源不足时，通过 Bark 提醒。 |
 | 📊 | 看资源 | 查看 CPU、内存、磁盘以及 MAA/MuMu 的资源历史。 |
-| 📝 | 每日日报 | 每天汇总计划任务、资源趋势和待处理异常，并推送到 Bark；开启 DeepSeek 后，可在需要时附上一段简短分析。 |
+| 📝 | 自动日报与 AI 分析 | 每天汇总计划任务、资源趋势和待处理异常。开启 DeepSeek 后，会在出现值得关注的问题或资源压力时自动生成分析，给出结论和建议；配置 Bark 后，日报会把这些内容推送到手机。 |
 | 📰 | 看公告 | 增量读取明日方舟官网公告，并识别可能影响计划的维护时间。 |
 | 🧰 | 管理运行 | 从桌面窗口或托盘启动、停止和查看 Agent，也支持一个或两个 MAA。 |
 
