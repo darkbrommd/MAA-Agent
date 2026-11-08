@@ -1,139 +1,99 @@
-# MAA Agent
+<div align="center">
+  <img src="assets/app_icon.png" width="128" alt="MAA Agent 图标">
+  <h1>MAA Agent</h1>
+  <p>帮你照看 MAA 运行情况的 Windows 桌面程序</p>
 
-[English](README_EN.md) | 简体中文
+  [![Release](https://img.shields.io/github/v/release/darkbrommd/MAA-Agent?display_name=tag&style=flat-square)](https://github.com/darkbrommd/MAA-Agent/releases/latest)
+  [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat-square&logo=windows)](https://github.com/darkbrommd/MAA-Agent/releases/latest)
+  [![Tests](https://img.shields.io/badge/tests-passing-2ea44f?style=flat-square)](#开发与测试)
 
-MAA Agent 是一套仅运行于 Windows 的双实例 MAA 守护、告警与桌面管理工具。它从 MAA 日志和 Windows 运行状态中判断计划任务是否真正启动、完成或明确失败，在需要人工处理时通过 Bark 通知手机，并在桌面 GUI 中集中展示日程、资源、公告、配置和日志。
+  [下载最新版](https://github.com/darkbrommd/MAA-Agent/releases/latest) · [MAA 官网](https://maa.plus/) · [MAA 安装说明](https://docs.maa.plus/zh-cn/manual/install.html) · [English](README_EN.md)
+</div>
 
-当前稳定版本：**v1.0.0**（以根目录 [`VERSION`](VERSION) 和 GitHub Releases 为准）。
+---
 
-> 本项目是独立的辅助管理工具，不属于 MAA 官方项目。使用前请先安装并配置好 MAA；当前版本按 MAA1/MAA2 双实例场景设计。
+MAA Agent 会在后台查看 MAA 有没有按计划运行，并把日程、资源占用、官网公告和最近日志集中显示在一个窗口里。任务没有按时开始、MAA 意外退出，或者电脑内存与磁盘空间不足时，也可以通过 Bark 发提醒到手机。
 
-## 主要功能
+默认管理 **一个 MAA**，大多数用户跟着首次向导选择 MAA 文件夹即可。如果你同时运行两个 MAA，也可以在向导中选择双实例。
 
-- 监控 MAA、MuMu、内存、磁盘、窗口未响应和可选的代理健康状态。
-- 解析 MAA callback：可恢复的 `SubTaskError` 默认降噪，明确的任务链终态失败必须告警。
-- 读取 MAA 定时器，展示未来计划、运行中/完成/失败状态，并检测计划漏跑。
-- 支持单次“跳过/改时”监督例外；它只改变 Agent 的报警预期，不会修改 MAA 自身定时器。
-- Bark 事故通知、有限离线队列、冷却合并、日报和可选 DeepSeek 摘要。
-- 明日方舟官网公告增量抓取，识别维护时间并为受影响计划添加监督例外。
-- Tk 桌面管理器：运行状态、日程时间轴、资源历史、官网公告、报警演习、设置、完整配置和日志。
-- Windows 托盘、开机启动、快捷方式和安全的单实例启停。
+> MAA Agent 是独立的配套工具，不属于 MAA 官方。开始前，请先从 [MAA 官网](https://maa.plus/) 下载 MAA，并按 [安装说明](https://docs.maa.plus/zh-cn/manual/install.html) 完成配置。
 
-## 系统结构
+## 它能做什么
 
-```text
-MAA / MuMu / MAA 日志
-          |
-          v
-       agent.py --------> Bark / 日报 / 公告监督
-          |
-          +--> state/ 运行状态与历史（不提交）
-          +--> logs/  本地日志（不提交）
-          +--> config.json 本机路径与密钥（不提交）
-          ^
-          |
-   maa_agent_gui.py
-   状态、时间轴、资源、公告、设置与启停
+| | 功能 | 说明 |
+|---|---|---|
+| 🗓️ | 看日程 | 集中查看接下来要运行的任务，以及运行中、完成或失败的状态。 |
+| 🔔 | 发提醒 | MAA 没有运行、任务没有按时开始或电脑资源不足时，通过 Bark 提醒。 |
+| 📊 | 看资源 | 查看 CPU、内存、磁盘以及 MAA/MuMu 的资源历史。 |
+| 📰 | 看公告 | 增量读取明日方舟官网公告，并识别可能影响计划的维护时间。 |
+| 🧰 | 管理运行 | 从桌面窗口或托盘启动、停止和查看 Agent，也支持一个或两个 MAA。 |
+
+## 四步开始使用
+
+1. **先准备好 MAA。** [安装 MAA](https://docs.maa.plus/zh-cn/manual/install.html)，完成基础配置，并手动运行一次确认正常。
+2. **下载 MAA Agent。** 从 [Releases](https://github.com/darkbrommd/MAA-Agent/releases/latest) 下载最新版 ZIP，完整解压到固定文件夹，例如 `D:\MAA-Agent`。
+3. **双击 `MAA-Agent-GUI.bat`。** 第一次运行会自动创建 Python 环境并安装依赖，然后打开配置向导。
+4. **跟着向导完成设置。** 选择一个或两个 MAA、指定 MAA 文件夹；想收手机提醒就填写 Bark Key，不需要可以跳过。
+
+配置完成后会进入主界面。以后仍然双击 `MAA-Agent-GUI.bat`，也可以在设置中创建快捷方式和开机启动。
+
+### 安装没有自动完成？
+
+自动安装需要 Windows 10/11 和 Python 3.11 或更高版本。如果电脑没有 Python，请先从 [Python 官网](https://www.python.org/downloads/windows/) 安装，并勾选 **Add Python to PATH**，然后重新双击 `MAA-Agent-GUI.bat`。
+
+仍想手动配置时，可按下面的兼容流程操作：
+
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements-gui.txt
+Copy-Item config.example.json config.json
 ```
 
-GUI 是控制和观察界面，Agent 是后台监控主体；隐藏或退出 GUI 不等于停止 Agent。
+编辑 `config.json` 后再次打开 `MAA-Agent-GUI.bat`。现有用户的配置会原样保留，不会重新进入向导。
 
-## 要求
+## 日常使用
 
-- Windows 10/11
-- Python 3.11 或更高版本（安装时勾选 “Add Python to PATH”）
-- 已安装并配置好的 MAA；MuMu 模拟器为当前默认适配对象
-- Bark iOS 客户端及设备 key（若要接收手机通知）
-- DeepSeek API key 为可选项，只用于启用对应 AI 功能时
+- 主界面显示 MAA/MuMu 状态、未来计划、最近事件和资源趋势。
+- “日程时间轴”可以为某一次运行设置跳过或改时；它只改变提醒预期，不会修改 MAA 自己的定时器。
+- “设置”可调整开机启动、深色模式、实例别名、程序路径和 Bark 行为。
+- “通知测试”可以确认 Bark 与各项提醒是否正常，不会关闭或修改 MAA。
+- 关闭窗口后可以留在系统托盘，后台 Agent 会继续运行。
 
-## 安装与部署
+更完整的操作说明见 [`docs/GUI_AND_OPERATIONS.md`](docs/GUI_AND_OPERATIONS.md)，迁移说明见 [`docs/README_DEPLOY.md`](docs/README_DEPLOY.md)。
 
-1. 从 [Releases](https://github.com/darkbrommd/MAA-Agent/releases) 下载最新的 `MAA-Agent-vX.Y.Z-Windows-source.zip`，解压到固定目录，例如 `D:\MAA-Agent`。不要直接在 ZIP 内运行。
-2. 在项目目录打开 PowerShell，创建虚拟环境并安装依赖：
+## 项目结构
 
-   ```powershell
-   py -3.11 -m venv .venv
-   .\.venv\Scripts\python.exe -m pip install --upgrade pip
-   .\.venv\Scripts\python.exe -m pip install -r requirements-gui.txt
-   ```
-
-3. 创建本机配置：
-
-   ```powershell
-   Copy-Item config.example.json config.json
-   ```
-
-4. 编辑 `config.json`，至少检查以下内容：
-
-   - `bark_key`：Bark 设备 key；不使用 Bark 时将 `enable_bark` 设为 `false`。
-   - `maa_instance_dirs`：MAA1/MAA2 安装目录。
-   - `maa_gui_config_paths`：两个实例的 `config\gui.new.json`。
-   - `maa_log_paths`：两个实例的 `debug\asst.log`。
-   - `launch_paths`：可选，供 GUI 一键启动 MAA/MuMu。
-   - `deepseek_api_key`：可选；不使用时保持空字符串并将 `use_deepseek` 设为 `false`。
-
-5. 双击 `MAA-Agent-GUI.bat`。首次进入“设置”页后可配置开机启动、托盘行为、实例别名和启动路径。默认配置会让开机启动时直接进入托盘；若未看到窗口，请检查通知区域。
-6. 建议首次运行回归测试：
-
-   ```powershell
-   .\.venv\Scripts\python.exe -m unittest discover -s tests -v
-   ```
-
-配置保存后，运行中的 Agent 通常会在下一轮自动读取，不需要重启。请勿同时运行两个安装目录中的 Agent，也不要混用两边的 `state/`。
-
-## 常用入口
-
-| 文件 | 用途 |
+| 路径 | 作用 |
 |---|---|
-| `MAA-Agent-GUI.bat` | 打开桌面管理器，日常推荐入口。 |
-| `start_agent.bat` / `stop_agent.bat` | 后台启动或正常停止 Agent。 |
-| `emergency_stop_agent.bat` | 校验进程身份后执行紧急停止。 |
-| `run_regression_tests.bat` | 使用项目虚拟环境运行全部测试。 |
-| `preview_notifications.bat` | 预览通知模板，不发送 Bark。 |
-| `test_all_notifications.bat` | 真实发送整套演习通知；会连续推送。 |
-| `schedule_control.bat` | 管理某一次计划的监督例外。 |
-
-## 项目目录
-
-| 路径 | 说明 |
-|---|---|
-| `agent.py` | 后台主循环、监控、日志解析、告警、日报和公告监督。 |
-| `maa_agent_gui.py` | Tk 桌面管理器。 |
-| `agent_runtime.py` | 单实例、PID 身份校验与安全停止。 |
-| `schedule_utils.py` / `schedule_control.py` | MAA 计划读取与单次监督例外。 |
-| `resource_history.py` | 资源采样和历史读取。 |
-| `news_monitor.py` | 官网公告增量抓取和维护窗口解析。 |
-| `notification_drill.py` | 不制造真实故障的报警演习。 |
-| `config.example.json` | 可公开的配置模板。复制为 `config.json` 后填写本机信息。 |
-| `assets/` | 应用图标。 |
+| `agent.py` | 后台检查、MAA 日志读取、提醒和日报。 |
+| `maa_agent_gui.py` | 桌面主界面。 |
+| `first_run_setup.py` | 首次配置向导。 |
+| `setup.ps1` | 首次运行时创建 Python 环境并安装依赖。 |
+| `schedule_utils.py` | 读取 MAA 定时计划和单次调整。 |
+| `resource_history.py` | 资源采样与历史。 |
+| `news_monitor.py` | 官网公告读取与维护时间识别。 |
+| `config.example.json` | 默认单实例配置模板；手动配置时复制为 `config.json`。 |
 | `tests/` | 自动回归测试。 |
-| `docs/` | 操作、测试、路线图和历史变更文档。 |
 
-`config.json`、`.venv/`、`state/`、`logs/`、`backups/` 和密钥均为本机数据，不进入 Git 或 Release 包。
+本机的 `config.json`、密钥、日志、运行状态、备份和虚拟环境不会进入 Git 或 Release 包。
 
-## 更新与卸载
+## 可选功能
 
-更新前正常停止 Agent，备份自己的 `config.json` 和 `state/`，将新版本解压到新目录，再复制本机配置与状态。确认新版本正常后再删除旧目录。卸载时先停止 Agent，并在 GUI“设置”页关闭开机启动，然后删除安装目录和你创建的快捷方式。
+- **第二个 MAA：** 首次向导中选择“两个”，或之后在完整配置中添加 MAA2。
+- **Bark：** iPhone 手机提醒，可在首次向导跳过，之后再到设置中补充。
+- **DeepSeek：** 仅用于可选的 AI 日报功能，默认关闭。
+- **外部 heartbeat：** 用于覆盖整机断电或完全断网等本机无法发送提醒的情况，默认不配置。
 
-## 安全说明
+## 开发与测试
 
-- 不要提交或分享 `config.json`；Bark key、DeepSeek key 和真实路径可能位于其中。
-- `test_all_notifications.bat` 与 `test_bark.py` 会真实发送 Bark；`test_deepseek.py` 会访问并消耗 DeepSeek API。
-- 时间轴中的单次开关只改变监督预期，不会阻止或修改 MAA 的实际计划。
-- 本机完全断电、断网或 Windows 死机时，本地 Agent 无法自行通知；需另配外部 heartbeat 才能覆盖。
-
-## 开发
-
-开发者和后续 AI 请先阅读 `AGENTS.md`。常用验证：
+当前稳定版本：**v1.1.0**，版本号以根目录 [`VERSION`](VERSION) 为准。
 
 ```powershell
 .\.venv\Scripts\python.exe -m compileall -q .
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-发布包由 `scripts\build_release.ps1` 从 Git 跟踪文件生成，并自动排除内部交接文档、开发路线图和所有本机数据。
-
-版本号只在根目录 `VERSION` 维护。发布升级时必须先按语义化版本更新该文件，再同步发布说明、Git 标签和 GitHub Release；GUI 与打包脚本会自动读取它。
+开发者和后续 AI 请先阅读 [`AGENTS.md`](AGENTS.md)。发布包由 `scripts\build_release.ps1` 生成；每次版本升级都会同步版本文件、说明、Git 标签和 GitHub Release。
 
 ## 作者与致谢
 

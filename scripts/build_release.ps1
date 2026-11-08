@@ -36,7 +36,7 @@ New-Item -ItemType Directory -Path $stageRoot -Force | Out-Null
 
 $trackedFiles = & git -C $projectRoot ls-files
 if ($LASTEXITCODE -ne 0) { throw "git ls-files failed" }
-$untrackedPublicFiles = @("README_EN.md", "docs/RELEASE_NOTES_v1.0.0.md")
+$untrackedPublicFiles = @("README_EN.md", "docs/RELEASE_NOTES_v$Version.md", "first_run_setup.py", "setup.ps1")
 $releaseFiles = @($trackedFiles) + $untrackedPublicFiles | Sort-Object -Unique
 
 foreach ($relativePath in $releaseFiles) {

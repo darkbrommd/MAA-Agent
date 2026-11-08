@@ -4,7 +4,7 @@
 
 ## 1. 项目定位
 
-MAA Agent 是一套仅运行于 Windows 的双实例 MAA（MAA1/MAA2）守护、告警与桌面管理工具。
+MAA Agent 是一套仅运行于 Windows 的 MAA 守护、提醒与桌面管理工具。默认管理一个 MAA，也支持可选的双实例模式。
 
 它的核心价值不是“记录所有错误”，而是：
 
@@ -90,6 +90,7 @@ Agent 是后台监控主体；GUI 是控制和观察界面。关闭/隐藏 GUI �
 | `agent.py` | 主守护进程。负责主循环、Bark 队列、incident、进程/窗口/磁盘/内存/代理检查、MAA 日志解析、计划漏跑、任务生命周期、日报、官网公告与 heartbeat。核心业务逻辑集中于此。 |
 | `agent_runtime.py` | Agent 生命周期安全层。识别真实 `agent.py` 进程、Windows 命名互斥锁、PID/runtime 文件、正常及强制停止校验。防止编辑器命令行误判和 PID 复用误杀。 |
 | `maa_agent_gui.py` | Tk 桌面管理器。主页、日程时间轴、资源历史、公告中心、设置、日志、托盘、Agent 启停和诊断入口。 |
+| `first_run_setup.py` | 首次配置向导。默认生成单实例配置，可选第二个 MAA 和 Bark；已有 `config.json` 时不运行。 |
 | `gui_widgets.py` | 可复用 Tk 控件：iOS 风格开关、可滚动容器、内嵌日历、颜色与滚轮处理。尽量保持独立、可单测。 |
 | `schedule_utils.py` | 读取 MAA `gui.new.json`/`.bak` 定时器、生成基础计划、应用一次性 skip/move override。不会直接热改 MAA 自身定时器。 |
 | `schedule_control.py` | 一次性计划例外的独立 CLI/Tk 工具；`schedule_control.bat` 的入口。 |
@@ -122,6 +123,7 @@ Agent 是后台监控主体；GUI 是控制和观察界面。关闭/隐藏 GUI �
 |---|---|
 | `config.example.json` | 可提交的配置模板，不得包含真实密钥。 |
 | `config.json` | 生产配置，不入 Git。GUI 保存时会保留 `.bak`。 |
+| `setup.ps1` | 首次启动时创建项目 `.venv` 并安装依赖；依赖完整时直接退出。 |
 | `assets/` | GUI 图标等静态资源。 |
 | `tests/` | 全部自动回归测试。 |
 | `docs/` | 部署、GUI、测试和历史变更说明；部分内容是历史快照，可能落后于当前代码。 |
@@ -195,6 +197,8 @@ Agent 是后台监控主体；GUI 是控制和观察界面。关闭/隐藏 GUI �
 ## 7. 配置与时间边界
 
 - 生产配置从 `config.json` 读取；模板见 `config.example.json`。
+- 新安装缺少 `config.json` 时，GUI 先启动首次配置向导；默认一个 MAA、Bark 关闭，可选第二个 MAA。已有配置不迁移、不覆盖。
+- 用户只配置一个 MAA 时，GUI 菜单、托盘、设置和通知测试应只展示已配置实例；不要假定 MAA2 必然存在。
 - MAA 长期计划优先读取每个实例的 `config\gui.new.json`，失败后读 `.bak`，最后才使用 Agent 配置中的备用计划。
 - MAA timer 的 nullable `IsEnabled` 可能代表一次性启用，不能简单按 false 处理。
 - `operational_day_start_hour` 默认 4，只影响运行日统计；日历视图需要拼接成自然日 00:00–24:00。
@@ -243,7 +247,7 @@ Agent 是后台监控主体；GUI 是控制和观察界面。关闭/隐藏 GUI �
 .\.venv\Scripts\python.exe -m compileall -q .
 ```
 
-当前完整基线：**126 tests，全部通过**（2026-09-29）。
+当前完整基线：**130 tests，全部通过**（2026-11-08）。
 
 注意：必须使用项目 `.venv`，系统 Python 可能缺少 `psutil` 等依赖。测试需要可写临时目录；权限受限环境中出现 `PermissionError` 不代表业务断言失败，应在获得正常临时目录权限后复跑。
 
@@ -311,3 +315,4 @@ Agent 是后台监控主体；GUI 是控制和观察界面。关闭/隐藏 GUI �
 - 2026-09-29：将代理健康检查开关加入“设置”页并与高级页同步；关闭时不读取代理配置、不发外网探测。
 - 2026-11-08：整理 v1.0.0 公开发布：补齐中英文 README、部署依赖和可重复打包脚本；设置页加入作者信息；Copilot 通知 BAT 改为相对路径，避免跨安装目录写状态。
 - 2026-11-08：增加 `VERSION` 单一版本来源与强制 GitHub 同步/发布规则；明确每次修复、功能和文档更新均需及时提交并推送。
+- 2026-11-08：v1.1.0 增加首次安装/配置向导，默认改为单 MAA 与可选 Bark；GUI 按实际实例动态显示；中英文 README 改为面向普通用户的快速开始页面。

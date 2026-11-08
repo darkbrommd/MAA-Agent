@@ -1,7 +1,7 @@
 {
   "bark_server": "https://api.day.app",
-  "bark_key": "REPLACE_WITH_YOUR_BARK_KEY",
-  "enable_bark": true,
+  "bark_key": "",
+  "enable_bark": false,
   "bark_retry_attempts": 3,
   "bark_retry_sleep_seconds": 3,
   "bark_retry_infinite": false,
@@ -23,17 +23,14 @@
     "MuMuVMMSVC.exe"
   ],
   "maa_instance_dirs": {
-    "MAA1": "D:\\MAA\\MAA1",
-    "MAA2": "D:\\MAA\\MAA2"
+    "MAA1": "D:\\MAA\\MAA1"
   },
-  "maa_instance_aliases": {"MAA1": "", "MAA2": ""},
+  "maa_instance_aliases": {"MAA1": ""},
   "maa_gui_config_paths": {
-    "MAA1": "D:\\MAA\\MAA1\\config\\gui.new.json",
-    "MAA2": "D:\\MAA\\MAA2\\config\\gui.new.json"
+    "MAA1": "D:\\MAA\\MAA1\\config\\gui.new.json"
   },
   "maa_log_paths": [
-    "D:\\MAA\\MAA1\\debug\\asst.log",
-    "D:\\MAA\\MAA2\\debug\\asst.log"
+    "D:\\MAA\\MAA1\\debug\\asst.log"
   ],
   "check_interval_seconds": 60,
   "process_missing_sustain_minutes": 3,
@@ -59,6 +56,6 @@
   "gui_start_agent_on_launch": true,
   "gui_start_minimized": true,
   "gui_dark_mode": true,
-  "launch_paths": {"MAA1": "", "MAA2": "", "MuMu": ""},
-  "auto_start_apps_with_agent": {"MAA1": false, "MAA2": false, "MuMu": false}
+  "launch_paths": {"MAA1": "", "MuMu": ""},
+  "auto_start_apps_with_agent": {"MAA1": false, "MuMu": false}
 }

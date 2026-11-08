@@ -15,6 +15,7 @@ import diagnostic_commands
 import news_monitor
 import resource_history
 import maa_agent_gui
+import first_run_setup
 
 
 class NewsMonitorTests(unittest.TestCase):
@@ -78,6 +79,45 @@ class GuiFormattingTests(unittest.TestCase):
         filtered = maa_agent_gui.log_text_after(text, datetime(2026, 9, 22, 0, 10, 30))
         self.assertEqual(filtered, "[2026-09-22 00:11:00] new")
         self.assertIn("old", text)
+
+    def test_first_run_defaults_to_one_maa_and_optional_bark(self):
+        template = json.loads((ROOT / "config.example.json").read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as td:
+            maa = Path(td) / "MAA"
+            maa.mkdir()
+            config = first_run_setup.build_first_run_config(template, [maa])
+        self.assertEqual(list(config["maa_instance_dirs"]), ["MAA1"])
+        self.assertEqual(first_run_setup.configured_maa_labels(config), ["MAA1"])
+        self.assertEqual(
+            first_run_setup.configured_maa_labels({
+                "maa_instance_dirs": {"MAA1": "one"},
+                "maa_instance_aliases": {"MAA2": "stale"},
+            }),
+            ["MAA1"],
+        )
+        self.assertFalse(config["enable_bark"])
+        self.assertEqual(config["bark_key"], "")
+        self.assertNotIn("MAA2", config["launch_paths"])
+        self.assertTrue(config["setup_completed"])
+
+    def test_first_run_can_configure_two_maa_and_bark(self):
+        template = json.loads((ROOT / "config.example.json").read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as td:
+            first = Path(td) / "one"; second = Path(td) / "two"
+            first.mkdir(); second.mkdir()
+            config = first_run_setup.build_first_run_config(
+                template, [first, second], enable_bark=True, bark_key="device-key"
+            )
+        self.assertEqual(first_run_setup.configured_maa_labels(config), ["MAA1", "MAA2"])
+        self.assertEqual(len(config["maa_log_paths"]), 2)
+        self.assertTrue(config["enable_bark"])
+        self.assertEqual(config["bark_key"], "device-key")
+
+    def test_first_run_rejects_zero_or_more_than_two_maa(self):
+        with self.assertRaises(ValueError):
+            first_run_setup.build_first_run_config({}, [])
+        with self.assertRaises(ValueError):
+            first_run_setup.build_first_run_config({}, ["one", "two", "three"])
 
     def test_only_earliest_future_occurrence_is_marked_next(self):
         now=datetime(2026,9,26,20,0)

@@ -33,6 +33,7 @@ from diagnostic_commands import enqueue as enqueue_diagnostic
 from news_monitor import load_news_cache, refresh_news_cache
 from gui_widgets import InlineCalendar, ScrollableFrame, ToggleSwitch
 from resource_history import load_calendar_day as load_resource_calendar_day, memory_values, operational_date
+from first_run_setup import configured_maa_labels, run_first_setup
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -626,16 +627,16 @@ class ManagerApp:
         app_menu.add_command(label="退出 Agent 和管理器", command=self.exit_all)
         menubar.add_cascade(label="管理器", menu=app_menu)
         launch_menu = tk.Menu(menubar, tearoff=False)
-        for label in ("MAA1", "MAA2", "MuMu"):
+        for label in (*configured_maa_labels(self.cfg), "MuMu"):
             launch_menu.add_command(label=f"启动 {label}", command=lambda x=label: self.launch_configured(x))
         menubar.add_cascade(label="启动程序", menu=launch_menu)
         drill_menu = tk.Menu(menubar, tearoff=False)
-        drill_menu.add_command(label="MAA1 缺失（真实检测链路）", command=lambda: self.run_diagnostic("maa_missing", "MAA1"))
-        drill_menu.add_command(label="MAA2 缺失（真实检测链路）", command=lambda: self.run_diagnostic("maa_missing", "MAA2"))
+        for label in configured_maa_labels(self.cfg):
+            drill_menu.add_command(label=f"{label} 未运行", command=lambda x=label: self.run_diagnostic("maa_missing", x))
         drill_menu.add_separator()
         for label,kind in (("Bark 通道","bark_transport"),("内存报警","memory"),("磁盘报警","disk"),("代理报警","proxy"),("窗口未响应","hung"),("计划漏跑","schedule"),("官网维护公告","news")):
             drill_menu.add_command(label=label, command=lambda x=kind: self.run_diagnostic(x))
-        menubar.add_cascade(label="高级 → 报警演习", menu=drill_menu)
+        menubar.add_cascade(label="高级 → 通知测试", menu=drill_menu)
         self.root.configure(menu=menubar)
 
         self.header = tk.Canvas(self.root, height=70, highlightthickness=0)
@@ -657,7 +658,7 @@ class ManagerApp:
         self.notebook.add(self.schedule_tab, text=" 日程时间轴 ")
         self.notebook.add(self.resource_tab, text=" 资源历史 ")
         self.notebook.add(self.news_tab, text=" 官网公告 ")
-        self.notebook.add(self.diagnostics_tab, text=" 报警演习 ")
+        self.notebook.add(self.diagnostics_tab, text=" 通知测试 ")
         self.notebook.add(self.timing_tab, text=" 高级时间策略 ")
         self.notebook.add(self.config_tab, text=" 全部配置 ")
         self.notebook.add(self.logs_tab, text=" 日志 ")
@@ -892,7 +893,7 @@ class ManagerApp:
         ttk.Label(apps,text="实例",style="Muted.TLabel").grid(row=0,column=0,sticky="w")
         ttk.Label(apps,text="显示别名",style="Muted.TLabel").grid(row=0,column=1,sticky="w")
         ttk.Label(apps,text="可执行文件路径",style="Muted.TLabel").grid(row=0,column=2,sticky="w",padx=5)
-        for row,label in enumerate(("MAA1","MAA2","MuMu"), start=1):
+        for row,label in enumerate((*configured_maa_labels(self.cfg),"MuMu"), start=1):
             path_var=tk.StringVar(); auto_var=tk.BooleanVar(); self.launch_path_vars[label]=path_var; self.autostart_vars[label]=auto_var
             ttk.Label(apps,text=label,width=8).grid(row=row,column=0,sticky="w",pady=5)
             if label.startswith("MAA"):
@@ -933,16 +934,16 @@ class ManagerApp:
         ttk.Button(bar,text="保存设置",command=self.save_settings).pack(side="right")
 
     def _build_diagnostics(self):
-        ttk.Label(self.diagnostics_tab,text="像火警测试手柄一样，把演习信号交给正在运行的 Agent。所有手机通知都会明确标注“演习”。",style="Muted.TLabel").pack(anchor="w",pady=(0,10))
-        real=ttk.LabelFrame(self.diagnostics_tab,text="真实检测链路",padding=12); real.pack(fill="x")
-        ttk.Label(real,text="MAA 缺失演习会回填持续时间、进入实际 check_processes()、经过实际冷却与 Bark 发送链路；不会关闭真实 MAA。",wraplength=900).pack(anchor="w",pady=(0,8))
-        ttk.Button(real,text="模拟 MAA1 已缺失 3 分钟",command=lambda:self.run_diagnostic("maa_missing","MAA1")).pack(side="left",padx=(0,8))
-        ttk.Button(real,text="模拟 MAA2 已缺失 3 分钟",command=lambda:self.run_diagnostic("maa_missing","MAA2")).pack(side="left")
-        previews=ttk.LabelFrame(self.diagnostics_tab,text="其他正式通知模板与传输链路",padding=12); previews.pack(fill="x",pady=(12,0))
-        for idx,(label,kind) in enumerate((("Bark 通道","bark_transport"),("内存压力","memory"),("磁盘空间","disk"),("代理故障","proxy"),("窗口未响应","hung"),("计划漏跑","schedule"),("Agent 异常","agent_error"),("官网维护","news"))):
+        ttk.Label(self.diagnostics_tab,text="在这里发送测试提醒，确认手机通知和各项检查是否正常。测试不会关闭 MAA。",style="Muted.TLabel").pack(anchor="w",pady=(0,10))
+        real=ttk.LabelFrame(self.diagnostics_tab,text="MAA 运行检查",padding=12); real.pack(fill="x")
+        ttk.Label(real,text="测试会按实际检查流程运行，但不会停止或修改正在运行的 MAA。",wraplength=900).pack(anchor="w",pady=(0,8))
+        for index,label in enumerate(configured_maa_labels(self.cfg)):
+            ttk.Button(real,text=f"测试 {label} 未运行提醒",command=lambda x=label:self.run_diagnostic("maa_missing",x)).pack(side="left",padx=(0 if index == 0 else 8,8))
+        previews=ttk.LabelFrame(self.diagnostics_tab,text="其他提醒测试",padding=12); previews.pack(fill="x",pady=(12,0))
+        for idx,(label,kind) in enumerate((("Bark 通知","bark_transport"),("内存不足","memory"),("磁盘空间不足","disk"),("网络检查失败","proxy"),("窗口未响应","hung"),("任务未按时开始","schedule"),("Agent 出错","agent_error"),("官网维护","news"))):
             ttk.Button(previews,text=label,command=lambda x=kind:self.run_diagnostic(x),width=15).grid(row=idx//4,column=idx%4,padx=5,pady=5,sticky="ew")
-        ttk.Button(previews,text="测试全部（会连续推送）",command=self.run_all_diagnostics).grid(row=2,column=0,columnspan=4,padx=5,pady=(12,5),sticky="ew")
-        self.diagnostic_status_var=tk.StringVar(value="尚未执行演习。")
+        ttk.Button(previews,text="依次测试全部提醒",command=self.run_all_diagnostics).grid(row=2,column=0,columnspan=4,padx=5,pady=(12,5),sticky="ew")
+        self.diagnostic_status_var=tk.StringVar(value="尚未执行测试。")
         ttk.Label(self.diagnostics_tab,textvariable=self.diagnostic_status_var,wraplength=980).pack(anchor="w",pady=(14,0))
 
     def _build_timing(self):
@@ -970,7 +971,7 @@ class ManagerApp:
 
         explain = (
             "时间设置保存后，正在运行的 Agent 会在下一轮自动重新读取 config.json。\n"
-            "MAA1/MAA2 的长期执行时间仍在 MAA 自身“设置 → 定时执行”中修改；上一个标签页只处理单次例外。"
+            "MAA 的长期执行时间仍在 MAA 自身“设置 → 定时执行”中修改；上一个标签页只处理单次例外。"
         )
         ttk.Label(self.timing_tab, text=explain, justify="left", style="Muted.TLabel").pack(anchor="w", pady=14)
         ttk.Button(self.timing_tab, text="保存时间策略", command=self.save_timing).pack(anchor="e")
@@ -1138,22 +1139,23 @@ class ManagerApp:
                 draw = ImageDraw.Draw(image); draw.text((18, 16), "MA", fill="white")
             def launch_action(label):
                 return lambda: self.root.after(0,lambda:self.launch_configured(label))
+            def drill_action(label):
+                return lambda: self.root.after(0,lambda:self.run_diagnostic("maa_missing",label))
             launch_submenu=pystray.Menu(*[
                 pystray.MenuItem(f"启动 {label}",launch_action(label))
-                for label in ("MAA1","MAA2","MuMu")
+                for label in (*configured_maa_labels(self.cfg),"MuMu")
             ])
-            drill_submenu=pystray.Menu(
-                pystray.MenuItem("MAA1 缺失演习",lambda:self.root.after(0,lambda:self.run_diagnostic("maa_missing","MAA1"))),
-                pystray.MenuItem("MAA2 缺失演习",lambda:self.root.after(0,lambda:self.run_diagnostic("maa_missing","MAA2"))),
-                pystray.MenuItem("Bark 通道测试",lambda:self.root.after(0,lambda:self.run_diagnostic("bark_transport"))),
-            )
+            drill_submenu=pystray.Menu(*[
+                pystray.MenuItem(f"{label} 未运行提醒",drill_action(label))
+                for label in configured_maa_labels(self.cfg)
+            ], pystray.MenuItem("Bark 通知测试",lambda:self.root.after(0,lambda:self.run_diagnostic("bark_transport"))))
             menu = pystray.Menu(
                 pystray.MenuItem("打开管理器", lambda: self.root.after(0, self.show_window), default=True),
                 pystray.MenuItem("启动 Agent", lambda: self.root.after(0, self.start_agent)),
                 pystray.MenuItem("停止 Agent", lambda: self.root.after(0, self.stop_agent)),
                 pystray.MenuItem("重启 Agent", lambda: self.root.after(0, self.restart_agent)),
                 pystray.MenuItem("启动程序",launch_submenu),
-                pystray.MenuItem("报警演习",drill_submenu),
+                pystray.MenuItem("通知测试",drill_submenu),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem("退出管理器（Agent 继续运行）", lambda: self.root.after(0, self.exit_gui)),
                 pystray.MenuItem("退出 Agent 和管理器", lambda: self.root.after(0, self.exit_all)),
@@ -2114,13 +2116,13 @@ class ManagerApp:
 
     def run_diagnostic(self,kind,target=""):
         if not validated_agent_for_dir(BASE_DIR):
-            messagebox.showwarning("Agent 未运行","报警演习必须交给正在运行的 Agent。请先启动 Agent。",parent=self.root); return
+            messagebox.showwarning("Agent 未运行","通知测试需要正在运行的 Agent。请先启动 Agent。",parent=self.root); return
         command_id=enqueue_diagnostic(BASE_DIR,kind,target)
-        text=f"演习信号已发送（{command_id[:8]}），Agent 会立即处理。"
+        text=f"测试请求已发送（{command_id[:8]}），Agent 会立即处理。"
         self.diagnostic_status_var.set(text); self._set_footer(text)
 
     def run_all_diagnostics(self):
-        if messagebox.askyesno("确认连续推送？","这会向手机连续发送多条明确标注“演习”的通知，是否继续？",parent=self.root):
+        if messagebox.askyesno("确认连续推送？","这会向手机连续发送多条明确标注“测试”的通知，是否继续？",parent=self.root):
             self.run_diagnostic("all")
 
     def refresh_diagnostic_status(self):
@@ -2298,6 +2300,8 @@ if __name__ == "__main__":
     gui_mutex = AgentMutex(r"Local\MAA-Agent-Manager-8E79F134")
     if gui_mutex.acquire():
         try:
+            if not CONFIG_PATH.exists() and not run_first_setup(BASE_DIR):
+                raise SystemExit(0)
             ManagerApp().run()
         finally:
             gui_mutex.release()

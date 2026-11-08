@@ -1,139 +1,99 @@
-# MAA Agent
+<div align="center">
+  <img src="assets/app_icon.png" width="128" alt="MAA Agent icon">
+  <h1>MAA Agent</h1>
+  <p>A Windows desktop app that keeps an eye on your MAA</p>
 
-English | [简体中文](README.md)
+  [![Release](https://img.shields.io/github/v/release/darkbrommd/MAA-Agent?display_name=tag&style=flat-square)](https://github.com/darkbrommd/MAA-Agent/releases/latest)
+  [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat-square&logo=windows)](https://github.com/darkbrommd/MAA-Agent/releases/latest)
+  [![Tests](https://img.shields.io/badge/tests-passing-2ea44f?style=flat-square)](#development-and-tests)
 
-MAA Agent is a Windows-only watchdog, alerting service, and desktop manager for two MAA instances. It determines whether scheduled MAA jobs actually started, completed, or reached a terminal failure by reading MAA logs and Windows runtime state. Actionable incidents can be sent to a phone through Bark, while the desktop GUI provides schedules, resource history, official notices, configuration, and logs in one place.
+  [Download](https://github.com/darkbrommd/MAA-Agent/releases/latest) · [MAA website](https://maa.plus/) · [MAA installation guide](https://docs.maa.plus/en-us/manual/install.html) · [简体中文](README.md)
+</div>
 
-Current stable version: **v1.0.0** (the root [`VERSION`](VERSION) file and GitHub Releases are authoritative).
+---
 
-> This is an independent companion project and is not an official MAA project. Install and configure MAA first. The current release is designed around an MAA1/MAA2 setup.
+MAA Agent runs in the background and checks whether MAA starts its scheduled work. One window brings together upcoming runs, resource usage, official notices, and recent logs. It can also send Bark reminders when MAA is not running, a task does not start on time, or memory and disk space are running low.
 
-## Features
+It manages **one MAA installation by default**. For most users, setup is just choosing the MAA folder in the first-run wizard. A second MAA can be added during setup if needed.
 
-- Monitors MAA, MuMu, memory, disks, unresponsive windows, and optional proxy health.
-- Parses MAA callbacks: recoverable `SubTaskError` retries are normally suppressed, while explicit terminal task-chain failures must alert.
-- Reads MAA timers, shows future/running/completed/failed jobs, and detects missed scheduled runs.
-- Supports one-time skip/reschedule supervision overrides without changing MAA's own timers.
-- Sends Bark incident alerts with cooldown, aggregation, a bounded offline queue, daily reports, and optional DeepSeek summaries.
-- Incrementally checks official Arknights notices, extracts maintenance windows, and supervises affected runs.
-- Includes a Tk desktop manager for status, schedule timeline, resource history, notices, alert drills, settings, full configuration, and logs.
-- Provides a Windows tray icon, startup integration, shortcuts, and validated single-instance lifecycle controls.
+> MAA Agent is an independent companion project and is not part of MAA. Download MAA from the [official website](https://maa.plus/) and follow its [installation guide](https://docs.maa.plus/en-us/manual/install.html) before you start.
 
-## Architecture
+## What it does
 
-```text
-MAA / MuMu / MAA logs
-          |
-          v
-       agent.py --------> Bark / reports / notice supervision
-          |
-          +--> state/ local runtime state and history (private)
-          +--> logs/  local logs (private)
-          +--> config.json local paths and secrets (private)
-          ^
-          |
-   maa_agent_gui.py
-   status, timeline, resources, notices, settings, lifecycle
+| | Feature | Description |
+|---|---|---|
+| 🗓️ | Schedule | See upcoming runs and whether they are running, completed, or failed. |
+| 🔔 | Reminders | Use Bark when MAA is not running, a task is late, or system resources are low. |
+| 📊 | Resources | Review CPU, memory, disk, MAA, and MuMu history. |
+| 📰 | Notices | Read new official Arknights notices and detect maintenance windows. |
+| 🧰 | Controls | Start, stop, and inspect the Agent from the desktop window or tray; one or two MAA installations are supported. |
+
+## Get started in four steps
+
+1. **Set up MAA first.** [Install MAA](https://docs.maa.plus/en-us/manual/install.html), finish its basic configuration, and run one task manually to make sure it works.
+2. **Download MAA Agent.** Get the latest ZIP from [Releases](https://github.com/darkbrommd/MAA-Agent/releases/latest) and fully extract it to a permanent folder such as `D:\MAA-Agent`.
+3. **Double-click `MAA-Agent-GUI.bat`.** On the first run it creates the Python environment, installs dependencies, and opens the setup wizard.
+4. **Follow the wizard.** Choose one or two MAA installations and select each MAA folder. Add a Bark key for phone reminders, or skip it.
+
+After setup, the main window opens. Use `MAA-Agent-GUI.bat` again later, or create desktop and Windows startup shortcuts in Settings.
+
+### Automatic setup did not finish?
+
+Automatic setup requires Windows 10/11 and Python 3.11 or newer. If Python is missing, install it from [python.org](https://www.python.org/downloads/windows/), enable **Add Python to PATH**, and open `MAA-Agent-GUI.bat` again.
+
+The manual setup path remains available:
+
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements-gui.txt
+Copy-Item config.example.json config.json
 ```
 
-The Agent is the background monitor; the GUI is its control and observability surface. Hiding or closing the GUI does not stop the Agent.
+Edit `config.json`, then reopen `MAA-Agent-GUI.bat`. Existing configurations are preserved and do not trigger the wizard again.
 
-## Requirements
+## Daily use
 
-- Windows 10 or 11
-- Python 3.11 or newer (enable “Add Python to PATH” during installation)
-- An installed and configured MAA setup; MuMu is the currently targeted emulator family
-- Bark for iOS and a device key if phone alerts are required
-- A DeepSeek API key only if you enable the optional AI features
+- The dashboard shows MAA/MuMu status, upcoming runs, recent events, and resource trends.
+- The timeline can skip or reschedule monitoring for one run. It does not edit MAA's own timers.
+- Settings covers Windows startup, dark mode, aliases, launch paths, and Bark behavior.
+- Notification tests check Bark and reminder behavior without stopping or changing MAA.
+- Closing the window can leave the Agent running in the system tray.
 
-## Installation
-
-1. Download the latest `MAA-Agent-vX.Y.Z-Windows-source.zip` from [Releases](https://github.com/darkbrommd/MAA-Agent/releases), then extract it to a permanent folder such as `D:\MAA-Agent`. Do not run it from inside the ZIP.
-2. Open PowerShell in the extracted folder and install the environment:
-
-   ```powershell
-   py -3.11 -m venv .venv
-   .\.venv\Scripts\python.exe -m pip install --upgrade pip
-   .\.venv\Scripts\python.exe -m pip install -r requirements-gui.txt
-   ```
-
-3. Create your private configuration:
-
-   ```powershell
-   Copy-Item config.example.json config.json
-   ```
-
-4. Edit `config.json` and review at least:
-
-   - `bark_key`; set `enable_bark` to `false` if Bark is not used.
-   - `maa_instance_dirs` for MAA1 and MAA2.
-   - `maa_gui_config_paths` for each `config\gui.new.json`.
-   - `maa_log_paths` for each `debug\asst.log`.
-   - Optional `launch_paths` used by the GUI to launch MAA/MuMu.
-   - Optional `deepseek_api_key`; leave it empty and keep `use_deepseek` disabled when unused.
-
-5. Double-click `MAA-Agent-GUI.bat`. Use the Settings tab to configure Windows startup, tray behavior, instance aliases, and launch paths. The default configuration starts minimized during Windows startup, so check the notification area if no window appears.
-6. Run the regression suite after the first installation:
-
-   ```powershell
-   .\.venv\Scripts\python.exe -m unittest discover -s tests -v
-   ```
-
-The running Agent normally reloads saved configuration on its next loop. Do not run Agents from two installation folders at once, and never share one folder's `state/` with another installation.
-
-## Entry points
-
-| File | Purpose |
-|---|---|
-| `MAA-Agent-GUI.bat` | Opens the desktop manager; recommended daily entry point. |
-| `start_agent.bat` / `stop_agent.bat` | Starts the Agent in the background or requests a clean stop. |
-| `emergency_stop_agent.bat` | Validates process identity before an emergency stop. |
-| `run_regression_tests.bat` | Runs the full test suite in the project virtual environment. |
-| `preview_notifications.bat` | Previews notification templates without sending Bark. |
-| `test_all_notifications.bat` | Sends the full alert drill to Bark; expect multiple real notifications. |
-| `schedule_control.bat` | Manages one-time supervision overrides. |
+See [`docs/GUI_AND_OPERATIONS.md`](docs/GUI_AND_OPERATIONS.md) for detailed operation and [`docs/README_DEPLOY.md`](docs/README_DEPLOY.md) for migration notes.
 
 ## Repository map
 
 | Path | Role |
 |---|---|
-| `agent.py` | Monitor loop, log parsing, alerts, reporting, and notice supervision. |
-| `maa_agent_gui.py` | Tk desktop manager. |
-| `agent_runtime.py` | Single-instance locking, PID validation, and safe shutdown. |
-| `schedule_utils.py` / `schedule_control.py` | MAA timer reading and one-time overrides. |
-| `resource_history.py` | Resource sampling and historical views. |
-| `news_monitor.py` | Incremental official-notice fetching and maintenance parsing. |
-| `notification_drill.py` | Synthetic alert drills without creating real failures. |
-| `config.example.json` | Public template; copy it to the private `config.json`. |
-| `assets/` | Application icons. |
+| `agent.py` | Background checks, MAA log reading, reminders, and reports. |
+| `maa_agent_gui.py` | Desktop application. |
+| `first_run_setup.py` | First-run setup wizard. |
+| `setup.ps1` | Creates the Python environment and installs dependencies. |
+| `schedule_utils.py` | Reads MAA schedules and applies one-time monitoring changes. |
+| `resource_history.py` | Resource sampling and history. |
+| `news_monitor.py` | Official-notice updates and maintenance-window detection. |
+| `config.example.json` | Single-MAA default template; copy it to `config.json` for manual setup. |
 | `tests/` | Automated regression tests. |
-| `docs/` | Operations, testing, roadmap, and historical notes. |
 
-`config.json`, `.venv/`, `state/`, `logs/`, `backups/`, and all secrets are local-only and are excluded from Git and release archives.
+Local `config.json`, secrets, logs, runtime state, backups, and the virtual environment are excluded from Git and release packages.
 
-## Updating and removal
+## Optional features
 
-Before updating, stop the Agent cleanly and back up `config.json` and `state/`. Extract the new version to a new directory, then copy your local configuration and state. Delete the old installation only after validating the new one. To uninstall, stop the Agent, disable Windows startup in Settings, then remove the installation folder and any shortcuts you created.
+- **Second MAA:** choose “two” in the first-run wizard, or add MAA2 later through the full configuration editor.
+- **Bark:** optional iPhone reminders; skip it during setup and add it later if preferred.
+- **DeepSeek:** used only for optional AI daily reports and disabled by default.
+- **External heartbeat:** covers full power or network outages that a local app cannot report; it is not configured by default.
 
-## Safety notes
+## Development and tests
 
-- Never commit or share `config.json`; it may contain Bark/DeepSeek keys and local paths.
-- `test_all_notifications.bat` and `test_bark.py` send real Bark messages. `test_deepseek.py` consumes the DeepSeek API.
-- Timeline overrides only change monitoring expectations; they do not prevent or edit MAA jobs.
-- A local Agent cannot report a full power loss, complete network outage, or Windows freeze. An external heartbeat service is required for those cases.
-
-## Development
-
-Contributors and future coding agents should read `AGENTS.md` first. Standard verification:
+Current stable version: **v1.1.0**. The root [`VERSION`](VERSION) file is authoritative.
 
 ```powershell
 .\.venv\Scripts\python.exe -m compileall -q .
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-`scripts\build_release.ps1` builds a release archive from Git-tracked files and excludes internal handoff material, development roadmaps, and all machine-local data.
-
-The version is maintained only in the root `VERSION` file. Before publishing an upgrade, update it using semantic versioning and synchronize the release notes, Git tag, and GitHub Release. The GUI and packaging script read it automatically.
+Contributors and coding agents should read [`AGENTS.md`](AGENTS.md) first. `scripts\build_release.ps1` creates release packages; every version upgrade synchronizes the version file, documentation, Git tag, and GitHub Release.
 
 ## Author and acknowledgement
 

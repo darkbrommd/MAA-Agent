@@ -5,10 +5,11 @@
 ## 从零部署
 
 1. 将 Release ZIP 解压到固定目录。
-2. 用 Python 3.11 或更高版本创建项目内 `.venv`。
-3. 安装 `requirements-gui.txt`。
-4. 将 `config.example.json` 复制为本机私有的 `config.json`，填写 MAA、日志、Bark 和可选 DeepSeek 配置。
-5. 运行回归测试，然后双击 `MAA-Agent-GUI.bat`。
+2. 安装 Python 3.11 或更高版本。
+3. 双击 `MAA-Agent-GUI.bat`；启动器会创建项目 `.venv`、安装依赖并打开首次配置向导。
+4. 向导默认配置一个 MAA，可选第二个 MAA 和 Bark。完成后进入主界面。
+
+如需完全手动部署，仍可自行创建 `.venv`、安装 `requirements-gui.txt`，再将 `config.example.json` 复制为私有的 `config.json`。
 
 脚本均根据自身目录计算路径，因此安装目录名称不必包含 `MAA-Agent_0920`。
 
