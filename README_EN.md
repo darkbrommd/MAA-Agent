@@ -25,6 +25,7 @@ It manages **one MAA installation by default**. For most users, setup is just ch
 | 🗓️ | Schedule | See upcoming runs and whether they are running, completed, or failed. |
 | 🔔 | Reminders | Use Bark when MAA is not running, a task is late, or system resources are low. |
 | 📊 | Resources | Review CPU, memory, disk, MAA, and MuMu history. |
+| 📝 | Daily report | A daily summary of scheduled runs, resource trends, and open issues, delivered through Bark. With DeepSeek enabled, it can add a short analysis when something needs a closer look. |
 | 📰 | Notices | Read new official Arknights notices and detect maintenance windows. |
 | 🧰 | Controls | Start, stop, and inspect the Agent from the desktop window or tray; one or two MAA installations are supported. |
 
@@ -81,7 +82,7 @@ Local `config.json`, secrets, logs, runtime state, backups, and the virtual envi
 
 - **Second MAA:** choose “two” in the first-run wizard, or add MAA2 later through the full configuration editor.
 - **Bark:** optional iPhone reminders; skip it during setup and add it later if preferred.
-- **DeepSeek:** used only for optional AI daily reports and disabled by default.
+- **DeepSeek daily analysis:** off by default. Once enabled, the daily report asks for a short analysis only when there are unresolved incidents or memory usage or CPU load has stayed high for a while — one call per day by default.
 - **External heartbeat:** covers full power or network outages that a local app cannot report; it is not configured by default.
 
 ## Development and tests
