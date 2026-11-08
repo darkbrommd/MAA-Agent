@@ -70,9 +70,14 @@ class GuiFormattingTests(unittest.TestCase):
             "enable_copilot_notify_once.bat",
             "enable_copilot_notify_always.bat",
         ):
-            script = (ROOT / name).read_text(encoding="utf-8")
-            self.assertIn("%~dp0state", script)
+            script = (ROOT / "tools" / "windows" / name).read_text(encoding="utf-8")
+            self.assertIn("PROJECT_ROOT", script)
             self.assertNotIn("D:\\MAA-Agent", script)
+        root_scripts = sorted(path.name for path in ROOT.glob("*.bat"))
+        self.assertEqual(root_scripts, ["MAA-Agent-GUI.bat"])
+        launcher = (ROOT / "MAA-Agent-GUI.bat").read_text(encoding="utf-8")
+        self.assertIn("tools\\windows\\setup.ps1", launcher)
+        self.assertIn("tools\\windows\\maa_agent_gui_hidden.vbs", launcher)
 
     def test_dashboard_log_cutoff_does_not_change_source_text(self):
         text = "[2026-09-22 00:10:00] old\n[2026-09-22 00:11:00] new"

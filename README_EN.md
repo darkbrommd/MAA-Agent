@@ -68,7 +68,7 @@ See [`docs/GUI_AND_OPERATIONS.md`](docs/GUI_AND_OPERATIONS.md) for detailed oper
 | `agent.py` | Background checks, MAA log reading, reminders, and reports. |
 | `maa_agent_gui.py` | Desktop application. |
 | `first_run_setup.py` | First-run setup wizard. |
-| `setup.ps1` | Creates the Python environment and installs dependencies. |
+| `tools/windows/` | Windows helpers for setup, lifecycle, and testing. |
 | `schedule_utils.py` | Reads MAA schedules and applies one-time monitoring changes. |
 | `resource_history.py` | Resource sampling and history. |
 | `news_monitor.py` | Official-notice updates and maintenance-window detection. |
@@ -86,14 +86,14 @@ Local `config.json`, secrets, logs, runtime state, backups, and the virtual envi
 
 ## Development and tests
 
-Current stable version: **v1.1.0**. The root [`VERSION`](VERSION) file is authoritative.
+Current stable version: **v1.1.1**. The root [`VERSION`](VERSION) file is authoritative.
 
 ```powershell
 .\.venv\Scripts\python.exe -m compileall -q .
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-Contributors and coding agents should read [`AGENTS.md`](AGENTS.md) first. `scripts\build_release.ps1` creates release packages; every version upgrade synchronizes the version file, documentation, Git tag, and GitHub Release.
+Contributors should read [`CONTRIBUTING.md`](CONTRIBUTING.md); coding agents and maintainers can also use [`AGENTS.md`](AGENTS.md). See [`SECURITY.md`](SECURITY.md) for private vulnerability reporting. `scripts\build_release.ps1` creates release packages.
 
 ## Author and acknowledgement
 

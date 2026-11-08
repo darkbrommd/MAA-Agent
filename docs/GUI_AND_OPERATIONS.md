@@ -16,15 +16,14 @@
 
 窗口最小化或点击关闭按钮后会进入系统托盘，后台 Agent 不会因此停止。托盘菜单可以重新打开管理器、启动/停止 Agent，或仅退出管理器。
 
-## 后台脚本
+## Windows 辅助脚本
 
-- `start_agent.bat`：无控制台窗口启动当前目录的 Agent；
-- `stop_agent.bat`：无控制台窗口请求当前目录的 Agent 正常退出；
-- `emergency_stop_agent.bat`：先校验目标确实是当前目录的 `agent.py`，再在必要时强制停止；
-- `start_agent_hidden.vbs` / `stop_agent_hidden.vbs`：BAT 使用的动态路径后台入口；
-- `maa_agent_gui_hidden.vbs`：GUI 的后台入口。
+- `tools/windows/start_agent.bat`：无控制台窗口启动当前目录的 Agent；
+- `tools/windows/stop_agent.bat`：无控制台窗口请求当前目录的 Agent 正常退出；
+- `tools/windows/emergency_stop_agent.bat`：先校验目标确实是当前目录的 `agent.py`，再在必要时强制停止；
+- 其他维护、测试和兼容入口见 [`tools/windows/README.md`](../tools/windows/README.md)。
 
-所有入口都根据脚本自身目录计算路径，不再写死 `D:\MAA-Agent` 或 `D:\MAA-Agent_0920`，因此复制目录后不会发生“程序来自新版、工作目录却是旧版”的混跑。
+所有入口都根据脚本自身位置计算项目根目录，不依赖固定安装路径，因此复制目录后仍会使用同一份程序、配置和状态。
 
 ## 单实例与停止安全
 
@@ -56,7 +55,7 @@ MAA1/MAA2 的长期真实执行时间仍在 MAA 的“设置 → 定时执行”
 
 ## 回归测试
 
-运行 `run_regression_tests.bat`。当前新增的生命周期测试重点覆盖：
+运行 `tools/windows/run_regression_tests.bat`。当前生命周期测试重点覆盖：
 
 - 编辑器/PowerShell 命令行带 `agent.py` 不得触发重复进程；
 - Python 3.14 虚拟环境保留的启动器父进程不得被当成第二个 Agent；

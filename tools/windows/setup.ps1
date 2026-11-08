@@ -1,5 +1,5 @@
 $ErrorActionPreference = "Stop"
-$projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$projectRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..")).Path
 $venvPython = Join-Path $projectRoot ".venv\Scripts\python.exe"
 
 if (Test-Path -LiteralPath $venvPython) {

@@ -15,7 +15,7 @@
 
 ## 从旧版迁移
 
-1. 使用旧版 GUI 或 `stop_agent.bat` 正常停止 Agent。
+1. 使用旧版 GUI 或旧版自带的停止脚本正常停止 Agent；新版脚本位于 `tools/windows/stop_agent.bat`。
 2. 备份旧目录的 `config.json` 和 `state/`；日志可按需另行保留。
 3. 将新版本解压到新目录，不要直接覆盖仍在运行的旧目录。
 4. 比较 `config.example.json` 与自己的 `config.json`，保留本机路径和密钥并补充新增配置。
@@ -31,6 +31,8 @@
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-`preview_notifications.bat` 只预览通知；`test_all_notifications.bat` 会真实连续发送 Bark；`test_deepseek.py` 会消耗 API。后两项不属于普通回归测试。
+`tools/windows/preview_notifications.bat` 只预览通知；`tools/windows/test_all_notifications.bat` 会真实连续发送 Bark；`test_deepseek.py` 会消耗 API。后两项不属于普通回归测试。
+
+v1.1.1 起，根目录只保留日常入口 `MAA-Agent-GUI.bat`。如果曾为旧版辅助 BAT 创建快捷方式，请改为 `tools/windows/` 中的新位置；GUI 创建的快捷方式不受影响。
 
 详细操作见 [`GUI_AND_OPERATIONS.md`](GUI_AND_OPERATIONS.md)，完整验收方法见 [`TESTING_GUIDE.md`](TESTING_GUIDE.md)。

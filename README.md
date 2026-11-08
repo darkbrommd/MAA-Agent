@@ -68,7 +68,7 @@ Copy-Item config.example.json config.json
 | `agent.py` | 后台检查、MAA 日志读取、提醒和日报。 |
 | `maa_agent_gui.py` | 桌面主界面。 |
 | `first_run_setup.py` | 首次配置向导。 |
-| `setup.ps1` | 首次运行时创建 Python 环境并安装依赖。 |
+| `tools/windows/` | 首次安装、启停、测试等 Windows 辅助入口。 |
 | `schedule_utils.py` | 读取 MAA 定时计划和单次调整。 |
 | `resource_history.py` | 资源采样与历史。 |
 | `news_monitor.py` | 官网公告读取与维护时间识别。 |
@@ -86,14 +86,14 @@ Copy-Item config.example.json config.json
 
 ## 开发与测试
 
-当前稳定版本：**v1.1.0**，版本号以根目录 [`VERSION`](VERSION) 为准。
+当前稳定版本：**v1.1.1**，版本号以根目录 [`VERSION`](VERSION) 为准。
 
 ```powershell
 .\.venv\Scripts\python.exe -m compileall -q .
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-开发者和后续 AI 请先阅读 [`AGENTS.md`](AGENTS.md)。发布包由 `scripts\build_release.ps1` 生成；每次版本升级都会同步版本文件、说明、Git 标签和 GitHub Release。
+贡献代码请先阅读 [`CONTRIBUTING.md`](CONTRIBUTING.md)；AI 助手和维护者另见 [`AGENTS.md`](AGENTS.md)，安全问题见 [`SECURITY.md`](SECURITY.md)。发布包由 `scripts\build_release.ps1` 生成。
 
 ## 作者与致谢
 

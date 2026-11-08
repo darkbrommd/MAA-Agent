@@ -1,6 +1,7 @@
 @echo off
 setlocal
-set "STATE_DIR=%~dp0state"
+for %%I in ("%~dp0..\..") do set "PROJECT_ROOT=%%~fI"
+set "STATE_DIR=%PROJECT_ROOT%\state"
 if not exist "%STATE_DIR%" mkdir "%STATE_DIR%"
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$d=(Get-Date).ToString('yyyy-MM-dd'); Set-Content -LiteralPath '%STATE_DIR%\daily_report_skip_date.txt' -Value $d -Encoding ASCII"
 echo.

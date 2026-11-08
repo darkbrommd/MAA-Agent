@@ -17,7 +17,7 @@ $stageRoot = Join-Path $outputRoot $packageName
 $archivePath = Join-Path $outputRoot "$packageName.zip"
 $checksumPath = Join-Path $outputRoot "$packageName.sha256"
 
-$excludedFiles = @(".gitignore", "AGENTS.md", "MANIFEST.sha256")
+$excludedFiles = @(".gitignore", "AGENTS.local.md", "MANIFEST.sha256")
 $excludedPrefixes = @("scripts/", "docs/CHANGES_", "docs/ROADMAP", "docs/TEST_REPORT")
 
 function Test-ReleasePath([string]$RelativePath) {
@@ -36,7 +36,7 @@ New-Item -ItemType Directory -Path $stageRoot -Force | Out-Null
 
 $trackedFiles = & git -C $projectRoot ls-files
 if ($LASTEXITCODE -ne 0) { throw "git ls-files failed" }
-$untrackedPublicFiles = @("README_EN.md", "docs/RELEASE_NOTES_v$Version.md", "first_run_setup.py", "setup.ps1")
+$untrackedPublicFiles = @("docs/RELEASE_NOTES_v$Version.md")
 $releaseFiles = @($trackedFiles) + $untrackedPublicFiles | Sort-Object -Unique
 
 foreach ($relativePath in $releaseFiles) {

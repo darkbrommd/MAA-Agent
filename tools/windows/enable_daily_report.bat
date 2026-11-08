@@ -1,6 +1,7 @@
 @echo off
 setlocal
-set "SKIP_FILE=%~dp0state\daily_report_skip_date.txt"
+for %%I in ("%~dp0..\..") do set "PROJECT_ROOT=%%~fI"
+set "SKIP_FILE=%PROJECT_ROOT%\state\daily_report_skip_date.txt"
 if exist "%SKIP_FILE%" del /f /q "%SKIP_FILE%"
 echo.
 echo Daily report enabled.
