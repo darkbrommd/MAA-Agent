@@ -66,13 +66,9 @@ Copy-Item config.example.json config.json
 
 | 路径 | 作用 |
 |---|---|
-| `agent.py` | 后台检查、MAA 日志读取、提醒和日报。 |
-| `maa_agent_gui.py` | 桌面主界面。 |
-| `first_run_setup.py` | 首次配置向导。 |
+| [`app/`](app/) | Agent、桌面界面、首次配置、日程、资源和公告等程序源码。 |
 | `tools/windows/` | 首次安装、启停、测试等 Windows 辅助入口。 |
-| `schedule_utils.py` | 读取 MAA 定时计划和单次调整。 |
-| `resource_history.py` | 资源采样与历史。 |
-| `news_monitor.py` | 官网公告读取与维护时间识别。 |
+| `tools/diagnostics/` | 会访问真实 Bark 或 DeepSeek 的手动诊断工具。 |
 | `config.example.json` | 默认单实例配置模板；手动配置时复制为 `config.json`。 |
 | `tests/` | 自动回归测试。 |
 
@@ -87,7 +83,7 @@ Copy-Item config.example.json config.json
 
 ## 开发与测试
 
-当前稳定版本：**v1.1.1**，版本号以根目录 [`VERSION`](VERSION) 为准。
+当前稳定版本：**v1.1.2**，版本号以根目录 [`VERSION`](VERSION) 为准。
 
 ```powershell
 .\.venv\Scripts\python.exe -m compileall -q .

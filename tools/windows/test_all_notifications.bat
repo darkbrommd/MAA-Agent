@@ -12,9 +12,9 @@ echo ============================================================
 echo.
 
 if exist ".venv\Scripts\python.exe" (
-    ".venv\Scripts\python.exe" notification_drill.py
+    ".venv\Scripts\python.exe" app\notification_drill.py
 ) else (
-    py -3 notification_drill.py
+    py -3 app\notification_drill.py
 )
 
 set "RC=%ERRORLEVEL%"

@@ -27,7 +27,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import psutil
 
-from agent_runtime import AgentMutex, find_running_agents, request_stop, validated_agent_for_dir
+from agent_runtime import AgentMutex, agent_script_path, find_running_agents, request_stop, validated_agent_for_dir
 from schedule_utils import add_override, effective_occurrences, remove_override
 from diagnostic_commands import enqueue as enqueue_diagnostic
 from news_monitor import load_news_cache, refresh_news_cache
@@ -36,7 +36,8 @@ from resource_history import load_calendar_day as load_resource_calendar_day, me
 from first_run_setup import configured_maa_labels, run_first_setup
 
 
-BASE_DIR = Path(__file__).resolve().parent
+APP_DIR = Path(__file__).resolve().parent
+BASE_DIR = APP_DIR.parent
 VERSION_PATH = BASE_DIR / "VERSION"
 APP_VERSION = VERSION_PATH.read_text(encoding="utf-8").strip()
 AUTHOR_NAME = "Taylor Yu"
@@ -139,7 +140,7 @@ def create_windows_shortcut(path: Path, *, startup: bool = False) -> None:
     """Create a .lnk through Windows' built-in WScript.Shell COM object."""
     path.parent.mkdir(parents=True, exist_ok=True)
     target = _pythonw()
-    arguments = f'"{BASE_DIR / "maa_agent_gui.py"}"' + (" --startup" if startup else "")
+    arguments = f'"{APP_DIR / "maa_agent_gui.py"}"' + (" --startup" if startup else "")
     def ps(value: str) -> str:
         return value.replace("'", "''")
     script = (
@@ -463,12 +464,12 @@ def start_agent_process() -> tuple[bool, str]:
     running = validated_agent_for_dir(BASE_DIR)
     if running:
         return False, f"Agent 已在运行（PID {running['pid']}）。"
-    others = [row for row in find_running_agents() if not _same_path(row["script"], BASE_DIR / "agent.py")]
+    others = [row for row in find_running_agents() if not _same_path(row["script"], agent_script_path(BASE_DIR))]
     if others:
         return False, f"检测到另一份 Agent：{others[0]['script']}（PID {others[0]['pid']}）。"
     try:
         subprocess.Popen(
-            [str(_pythonw()), str(BASE_DIR / "agent.py")],
+            [str(_pythonw()), str(agent_script_path(BASE_DIR))],
             cwd=str(BASE_DIR),
             creationflags=NO_WINDOW | DETACHED | NEW_GROUP,
             close_fds=True,
@@ -1553,7 +1554,7 @@ class ManagerApp:
 
     def refresh_dashboard(self):
         row = validated_agent_for_dir(BASE_DIR)
-        others = [x for x in find_running_agents() if not _same_path(x["script"], BASE_DIR / "agent.py")]
+        others = [x for x in find_running_agents() if not _same_path(x["script"], agent_script_path(BASE_DIR))]
         if row:
             try:
                 elapsed = datetime.now().timestamp() - row["create_time"]

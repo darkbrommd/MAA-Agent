@@ -31,8 +31,10 @@
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-`tools/windows/preview_notifications.bat` 只预览通知；`tools/windows/test_all_notifications.bat` 会真实连续发送 Bark；`test_deepseek.py` 会消耗 API。后两项不属于普通回归测试。
+`tools/windows/preview_notifications.bat` 只预览通知；`tools/windows/test_all_notifications.bat` 和 `tools/diagnostics/test_bark.py` 会真实发送 Bark；`tools/diagnostics/test_deepseek.py` 会消耗 API。这些真实通道测试不属于普通回归测试。
 
 v1.1.1 起，根目录只保留日常入口 `MAA-Agent-GUI.bat`。如果曾为旧版辅助 BAT 创建快捷方式，请改为 `tools/windows/` 中的新位置；GUI 创建的快捷方式不受影响。
+
+v1.1.2 起，Python 程序源码统一放在 `app/`，真实联网的手动诊断工具放在 `tools/diagnostics/`。日常仍然只需从根目录启动 `MAA-Agent-GUI.bat`。
 
 详细操作见 [`GUI_AND_OPERATIONS.md`](GUI_AND_OPERATIONS.md)，完整验收方法见 [`TESTING_GUIDE.md`](TESTING_GUIDE.md)。

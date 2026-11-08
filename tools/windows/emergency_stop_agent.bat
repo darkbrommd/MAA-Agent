@@ -8,5 +8,5 @@ if not exist ".venv\Scripts\python.exe" (
   pause
   exit /b 1
 )
-".venv\Scripts\python.exe" stop_agent.py --force --timeout 5
+".venv\Scripts\python.exe" app\stop_agent.py --force --timeout 5
 pause

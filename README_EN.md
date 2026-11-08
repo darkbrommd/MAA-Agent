@@ -66,13 +66,9 @@ See [`docs/GUI_AND_OPERATIONS.md`](docs/GUI_AND_OPERATIONS.md) for detailed oper
 
 | Path | Role |
 |---|---|
-| `agent.py` | Background checks, MAA log reading, reminders, and reports. |
-| `maa_agent_gui.py` | Desktop application. |
-| `first_run_setup.py` | First-run setup wizard. |
+| [`app/`](app/) | Agent, desktop UI, first-run setup, schedule, resource, and notice source code. |
 | `tools/windows/` | Windows helpers for setup, lifecycle, and testing. |
-| `schedule_utils.py` | Reads MAA schedules and applies one-time monitoring changes. |
-| `resource_history.py` | Resource sampling and history. |
-| `news_monitor.py` | Official-notice updates and maintenance-window detection. |
+| `tools/diagnostics/` | Manual diagnostics that call the real Bark or DeepSeek service. |
 | `config.example.json` | Single-MAA default template; copy it to `config.json` for manual setup. |
 | `tests/` | Automated regression tests. |
 
@@ -87,7 +83,7 @@ Local `config.json`, secrets, logs, runtime state, backups, and the virtual envi
 
 ## Development and tests
 
-Current stable version: **v1.1.1**. The root [`VERSION`](VERSION) file is authoritative.
+Current stable version: **v1.1.2**. The root [`VERSION`](VERSION) file is authoritative.
 
 ```powershell
 .\.venv\Scripts\python.exe -m compileall -q .

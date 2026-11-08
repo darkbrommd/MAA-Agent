@@ -4,7 +4,7 @@ ToolsDir = FSO.GetParentFolderName(WScript.ScriptFullName)
 BaseDir = FSO.GetAbsolutePathName(FSO.BuildPath(ToolsDir, "..\.."))
 WshShell.CurrentDirectory = BaseDir
 PythonW = FSO.BuildPath(BaseDir, ".venv\Scripts\pythonw.exe")
-GuiPy = FSO.BuildPath(BaseDir, "maa_agent_gui.py")
+GuiPy = FSO.BuildPath(BaseDir, "app\maa_agent_gui.py")
 Args = ""
 For Each Arg In WScript.Arguments
   Args = Args & " " & Arg

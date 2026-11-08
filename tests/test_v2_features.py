@@ -7,8 +7,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+APP_DIR = ROOT / "app"
+if str(APP_DIR) not in sys.path:
+    sys.path.insert(0, str(APP_DIR))
 
 import agent
 import diagnostic_commands
@@ -62,6 +63,10 @@ class GuiFormattingTests(unittest.TestCase):
         self.assertEqual(maa_agent_gui.APP_VERSION, version)
         self.assertEqual(maa_agent_gui.AUTHOR_NAME, "Taylor Yu")
         self.assertEqual(maa_agent_gui.AUTHOR_URL, "https://github.com/darkbrommd")
+        self.assertEqual(maa_agent_gui.BASE_DIR, ROOT)
+        self.assertEqual(agent.BASE_DIR, ROOT)
+        self.assertEqual(agent.agent_process_info.__module__, "agent_runtime")
+        self.assertTrue((APP_DIR / "agent.py").is_file())
         requirements = (ROOT / "requirements-gui.txt").read_text(encoding="utf-8").lower()
         for package in ("psutil", "requests", "pywin32", "openai", "pystray", "pillow"):
             self.assertIn(package, requirements)

@@ -12,7 +12,7 @@ from schedule_utils import (
     remove_override,
 )
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parents[1]
 CONFIG_PATH = BASE_DIR / "config.json"
 
 

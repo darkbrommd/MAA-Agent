@@ -17,14 +17,7 @@ MAA Agent 是一个 Windows 桌面工具，用来查看 MAA 的计划任务、�
 
 | 路径 | 作用 |
 |---|---|
-| `agent.py` | 后台监控、MAA 日志解析、提醒、日报和公告监督。 |
-| `agent_runtime.py` | Agent 单实例、进程身份校验和安全停止。 |
-| `maa_agent_gui.py` | Tk 桌面管理器。 |
-| `first_run_setup.py` | 首次配置向导。 |
-| `schedule_utils.py` / `schedule_control.py` | MAA 计划读取和单次监督调整。 |
-| `resource_history.py` | 资源采样和历史读取。 |
-| `news_monitor.py` | 官网公告增量读取与维护时间解析。 |
-| `gui_widgets.py` | 可复用 Tk 控件。 |
+| `app/` | Agent、Tk GUI、首次配置、日程、资源、公告和通知等运行代码。 |
 | `tools/windows/` | Windows 辅助入口；根目录只保留日常启动器。 |
 | `tests/` | 自动回归测试。 |
 | `docs/` | 部署、操作、测试和历史说明。 |
@@ -63,7 +56,7 @@ Agent 是后台监控主体，GUI 是控制和观察界面。隐藏或关闭 GUI
 - Bark Key、DeepSeek Key、GitHub token、真实日志和用户的本机路径不要写入受跟踪文件、测试样例或提交信息。
 - 示例配置使用明显占位符；日志和异常中不要输出密钥值。
 - 不改动用户的 VPN、代理、DNS、TUN、防火墙或其他系统网络设置。连接失败时保留现场并报告结果。
-- 停止进程前使用 `agent_runtime.py` / `stop_agent.py` 的身份校验，避免根据模糊命令行误伤其他 Python 进程。
+- 停止进程前使用 `app/agent_runtime.py` / `app/stop_agent.py` 的身份校验，避免根据模糊命令行误伤其他 Python 进程。
 
 ## 实现习惯
 
@@ -91,7 +84,7 @@ Agent 是后台监控主体，GUI 是控制和观察界面。隐藏或关闭 GUI
 | `tests/test_gui_widgets.py` | 自定义 Tk 控件、颜色和滚轮。 |
 | `tests/test_news_center.py` | 公告缓存、增量读取、正文清理和维护监督。 |
 
-`tools/windows/test_all_notifications.bat` 和 `test_bark.py` 会真实发送 Bark；`test_deepseek.py` 会访问外部 API。它们只在明确需要验证对应通道时运行，不属于普通回归测试。
+`tools/windows/test_all_notifications.bat` 和 `tools/diagnostics/test_bark.py` 会真实发送 Bark；`tools/diagnostics/test_deepseek.py` 会访问外部 API。它们只在明确需要验证对应通道时运行，不属于普通回归测试。
 
 ## 文档、提交与发布
 

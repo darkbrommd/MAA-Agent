@@ -12,7 +12,7 @@ from pathlib import Path
 from agent_runtime import request_stop
 
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parents[1]
 
 
 def parse_args():

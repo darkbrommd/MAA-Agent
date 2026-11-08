@@ -29,6 +29,18 @@ ERROR_ALREADY_EXISTS = 183
 PYTHON_PROCESS_PREFIXES = ("python", "pythonw")
 
 
+def agent_script_path(base_dir: Path | str) -> Path:
+    """Return the current agent entry point, with legacy root-layout support."""
+    base = Path(base_dir).resolve()
+    nested = base / "app" / "agent.py"
+    return nested if nested.is_file() else base / "agent.py"
+
+
+def installation_dir_for_script(script: Path | str) -> Path:
+    path = Path(script).resolve()
+    return path.parent.parent if path.parent.name.lower() == "app" else path.parent
+
+
 def _same_path(left: Path | str, right: Path | str) -> bool:
     try:
         return os.path.normcase(str(Path(left).resolve())) == os.path.normcase(str(Path(right).resolve()))
@@ -124,7 +136,7 @@ def find_running_agents(
             if proc.pid in excluded:
                 continue
             row = process_agent_info(proc)
-            if row is not None and Path(row["script"]).parent.name.lower().startswith("maa-agent"):
+            if row is not None and installation_dir_for_script(row["script"]).name.lower().startswith("maa-agent"):
                 rows.append(row)
         except (psutil.Error, OSError, ValueError):
             continue
@@ -192,7 +204,7 @@ def write_runtime_record(base_dir: Path | str, pid: int | None = None) -> dict:
     record = {
         "pid": pid,
         "create_time": proc.create_time(),
-        "script": str((base / "agent.py").resolve()),
+        "script": str(agent_script_path(base)),
         "started_at": datetime.now().astimezone().isoformat(timespec="seconds"),
     }
     tmp = runtime_file(base).with_suffix(".json.tmp")
@@ -215,7 +227,7 @@ def read_runtime_record(base_dir: Path | str) -> dict | None:
 
 def validated_agent_for_dir(base_dir: Path | str) -> dict | None:
     base = Path(base_dir).resolve()
-    expected_script = base / "agent.py"
+    expected_script = agent_script_path(base)
     record = read_runtime_record(base)
     if record:
         try:
@@ -282,7 +294,7 @@ def request_stop(base_dir: Path | str, timeout_seconds: float = 20, force: bool 
     )
     deadline = time.monotonic() + max(0, timeout_seconds)
     while time.monotonic() < deadline:
-        if agent_process_info(pid, base / "agent.py") is None:
+        if agent_process_info(pid, agent_script_path(base)) is None:
             clear_runtime_files(base, expected_pid=pid)
             return StopResult("stopped", "Agent 已正常停止。", pid)
         time.sleep(0.2)
@@ -290,7 +302,7 @@ def request_stop(base_dir: Path | str, timeout_seconds: float = 20, force: bool 
     if force:
         # Revalidate immediately before termination so PID reuse cannot kill an
         # unrelated process.
-        row = agent_process_info(pid, base / "agent.py")
+        row = agent_process_info(pid, agent_script_path(base))
         if row is not None:
             try:
                 psutil.Process(pid).terminate()

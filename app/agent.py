@@ -39,7 +39,7 @@ except Exception:
     OpenAI = None
 
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parents[1]
 LOG_DIR = BASE_DIR / "logs"
 ARCHIVE_DIR = LOG_DIR / "archive"
 STATE_DIR = BASE_DIR / "state"
@@ -1027,7 +1027,7 @@ def _agent_script_from_cmdline(cmdline, cwd=None):
 
 
 def pid_is_our_agent(pid):
-    return agent_process_info(pid, BASE_DIR / "agent.py") is not None
+    return agent_process_info(pid, Path(__file__).resolve()) is not None
 
 
 def find_other_maa_agent_process():
