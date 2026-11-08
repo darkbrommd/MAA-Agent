@@ -11,6 +11,7 @@ logs/
 backups/
 disabled_alerts/
 MANIFEST.sha256
+dist/
 *.tmp
 
 # Editor / OS files

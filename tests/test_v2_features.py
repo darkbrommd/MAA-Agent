@@ -55,6 +55,22 @@ class NewsMonitorTests(unittest.TestCase):
 
 
 class GuiFormattingTests(unittest.TestCase):
+    def test_public_release_metadata_and_portable_copilot_scripts(self):
+        self.assertEqual(maa_agent_gui.APP_VERSION, "1.0.0")
+        self.assertEqual(maa_agent_gui.AUTHOR_NAME, "Taylor Yu")
+        self.assertEqual(maa_agent_gui.AUTHOR_URL, "https://github.com/darkbrommd")
+        requirements = (ROOT / "requirements-gui.txt").read_text(encoding="utf-8").lower()
+        for package in ("psutil", "requests", "pywin32", "openai", "pystray", "pillow"):
+            self.assertIn(package, requirements)
+        for name in (
+            "disable_copilot_notify.bat",
+            "enable_copilot_notify_once.bat",
+            "enable_copilot_notify_always.bat",
+        ):
+            script = (ROOT / name).read_text(encoding="utf-8")
+            self.assertIn("%~dp0state", script)
+            self.assertNotIn("D:\\MAA-Agent", script)
+
     def test_dashboard_log_cutoff_does_not_change_source_text(self):
         text = "[2026-09-22 00:10:00] old\n[2026-09-22 00:11:00] new"
         filtered = maa_agent_gui.log_text_after(text, datetime(2026, 9, 22, 0, 10, 30))

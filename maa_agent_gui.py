@@ -36,6 +36,9 @@ from resource_history import load_calendar_day as load_resource_calendar_day, me
 
 
 BASE_DIR = Path(__file__).resolve().parent
+APP_VERSION = "1.0.0"
+AUTHOR_NAME = "Taylor Yu"
+AUTHOR_URL = "https://github.com/darkbrommd"
 CONFIG_PATH = BASE_DIR / "config.json"
 LOG_DIR = BASE_DIR / "logs"
 STATE_DIR = BASE_DIR / "state"
@@ -608,6 +611,7 @@ class ManagerApp:
         style.configure("Good.TLabel", foreground=palette["good"], font=("Microsoft YaHei UI", 12, "bold"))
         style.configure("Bad.TLabel", foreground=palette["bad"], font=("Microsoft YaHei UI", 12, "bold"))
         style.configure("Muted.TLabel", foreground=palette["muted"])
+        style.configure("Link.TLabel", foreground=palette["accent"])
 
     def _build_ui(self):
         menubar = tk.Menu(self.root)
@@ -917,6 +921,12 @@ class ManagerApp:
         ttk.Label(bark,text="每次间隔（秒）").grid(row=0,column=2,sticky="e",padx=(22,6))
         ttk.Entry(bark,textvariable=self.bark_retry_sleep_var,width=8).grid(row=0,column=3,sticky="w")
         self._toggle_field(bark,"无限保留失败消息并持续补发（不会阻塞监控主循环）",self.bark_retry_infinite_var).grid(row=0,column=4,sticky="ew",padx=(24,0))
+        about = ttk.LabelFrame(settings_body, text="关于", padding=12)
+        about.pack(fill="x", pady=(12,0))
+        ttk.Label(about, text=f"MAA Agent v{APP_VERSION} · 作者：{AUTHOR_NAME}").pack(side="left")
+        author_link = ttk.Label(about, text=AUTHOR_URL, style="Link.TLabel", cursor="hand2")
+        author_link.pack(side="left", padx=(12,0))
+        author_link.bind("<Button-1>", lambda _event: webbrowser.open(AUTHOR_URL))
         bar=ttk.Frame(settings_body); bar.pack(fill="x",pady=(14,0))
         ttk.Button(bar,text="修复桌面与开始菜单快捷方式",command=self.install_shortcuts).pack(side="left")
         ttk.Button(bar,text="保存设置",command=self.save_settings).pack(side="right")
