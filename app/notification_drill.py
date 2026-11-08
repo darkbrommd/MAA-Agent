@@ -34,7 +34,7 @@ def build_cases():
         DrillCase(
             "duplicate_start",
             "MAA Agent 未重复启动",
-            "检测到已有一个 MAA Agent 正在运行，本次启动已自动退出。\n正在运行：D:\\MAA-Agent_0920\\agent.py",
+            "检测到已有一个 MAA Agent 正在运行，本次启动已自动退出。\n正在运行：D:\\MAA-Agent_0920\\app\\agent.py",
             "active",
         ),
         DrillCase(

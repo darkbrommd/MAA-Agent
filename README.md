@@ -83,7 +83,7 @@ Copy-Item config.example.json config.json
 
 ## 开发与测试
 
-当前稳定版本：**v1.1.3**，版本号以根目录 [`VERSION`](VERSION) 为准。
+当前稳定版本：**v1.1.4**，版本号以根目录 [`VERSION`](VERSION) 为准。
 
 ```powershell
 .\.venv\Scripts\python.exe -m compileall -q .

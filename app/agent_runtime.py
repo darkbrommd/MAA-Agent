@@ -36,6 +36,17 @@ def agent_script_path(base_dir: Path | str) -> Path:
     return nested if nested.is_file() else base / "agent.py"
 
 
+def agent_script_candidates(base_dir: Path | str) -> tuple[Path, Path]:
+    """Return current and pre-v1.1.2 entry points for one installation."""
+    base = Path(base_dir).resolve()
+    return base / "app" / "agent.py", base / "agent.py"
+
+
+def is_script_for_installation(script: Path | str, base_dir: Path | str) -> bool:
+    """Whether an Agent script belongs to this installation, including legacy layout."""
+    return any(_same_path(script, candidate) for candidate in agent_script_candidates(base_dir))
+
+
 def installation_dir_for_script(script: Path | str) -> Path:
     path = Path(script).resolve()
     return path.parent.parent if path.parent.name.lower() == "app" else path.parent
@@ -101,8 +112,13 @@ def process_agent_info(proc: psutil.Process) -> dict | None:
         script = script_from_cmdline(proc.cmdline(), cwd, name)
         if script is None:
             return None
+        try:
+            parent_pid = proc.ppid()
+        except (AttributeError, psutil.Error):
+            parent_pid = None
         return {
             "pid": proc.pid,
+            "ppid": parent_pid,
             "name": name,
             "script": str(script),
             "create_time": proc.create_time(),
@@ -140,6 +156,17 @@ def find_running_agents(
                 rows.append(row)
         except (psutil.Error, OSError, ValueError):
             continue
+    # Python venv launchers on Windows can remain as a parent process with the
+    # exact same command line. Keep the child that runs Python, otherwise a
+    # legacy-layout force stop could terminate only the launcher shell.
+    by_pid = {int(row["pid"]): row for row in rows}
+    launcher_pids = {
+        int(row["ppid"])
+        for row in rows
+        if row.get("ppid") in by_pid
+        and _same_path(row["script"], by_pid[int(row["ppid"])]["script"])
+    }
+    rows = [row for row in rows if int(row["pid"]) not in launcher_pids]
     rows.sort(key=lambda x: (x.get("create_time", 0), x["pid"]))
     return rows
 
@@ -227,27 +254,30 @@ def read_runtime_record(base_dir: Path | str) -> dict | None:
 
 def validated_agent_for_dir(base_dir: Path | str) -> dict | None:
     base = Path(base_dir).resolve()
-    expected_script = agent_script_path(base)
     record = read_runtime_record(base)
     if record:
         try:
-            row = agent_process_info(int(record["pid"]), expected_script)
-            if row and abs(float(row["create_time"]) - float(record["create_time"])) < 1.0:
+            row = agent_process_info(int(record["pid"]))
+            if (
+                row
+                and is_script_for_installation(row["script"], base)
+                and abs(float(row["create_time"]) - float(record["create_time"])) < 1.0
+            ):
                 return row
         except (KeyError, TypeError, ValueError):
             pass
     # Backward-compatible fallback for the old plain PID file.
     try:
         legacy_pid = int(pid_file(base).read_text(encoding="utf-8").strip())
-        row = agent_process_info(legacy_pid, expected_script)
-        if row:
+        row = agent_process_info(legacy_pid)
+        if row and is_script_for_installation(row["script"], base):
             return row
     except Exception:
         pass
     # A PID file may have been lost, but the exact Python process is still a
     # valid target. Never select a sibling installation here.
     for row in find_running_agents():
-        if _same_path(row["script"], expected_script):
+        if is_script_for_installation(row["script"], base):
             return row
     return None
 
@@ -287,6 +317,7 @@ def request_stop(base_dir: Path | str, timeout_seconds: float = 20, force: bool 
         return StopResult("not_running", "Agent 没有运行。")
 
     pid = int(row["pid"])
+    target_script = Path(row["script"])
     stop_file(base).parent.mkdir(parents=True, exist_ok=True)
     stop_file(base).write_text(
         json.dumps({"requested_at": time.time(), "target_pid": pid}),
@@ -294,7 +325,7 @@ def request_stop(base_dir: Path | str, timeout_seconds: float = 20, force: bool 
     )
     deadline = time.monotonic() + max(0, timeout_seconds)
     while time.monotonic() < deadline:
-        if agent_process_info(pid, agent_script_path(base)) is None:
+        if agent_process_info(pid, target_script) is None:
             clear_runtime_files(base, expected_pid=pid)
             return StopResult("stopped", "Agent 已正常停止。", pid)
         time.sleep(0.2)
@@ -302,7 +333,7 @@ def request_stop(base_dir: Path | str, timeout_seconds: float = 20, force: bool 
     if force:
         # Revalidate immediately before termination so PID reuse cannot kill an
         # unrelated process.
-        row = agent_process_info(pid, agent_script_path(base))
+        row = agent_process_info(pid, target_script)
         if row is not None:
             try:
                 psutil.Process(pid).terminate()

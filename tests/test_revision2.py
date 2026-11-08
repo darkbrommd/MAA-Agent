@@ -809,9 +809,52 @@ class AgentLogicTests(unittest.TestCase):
             def cmdline(self): return ["pythonw.exe",str(Path(tempfile.gettempdir())/"MAA-Agent_0920"/"agent.py")]
             def cwd(self): return tempfile.gettempdir()
             def create_time(self): return 100.0
+            def ppid(self): return 1
         with patch.object(agent_runtime.psutil,"process_iter",return_value=[FakeLauncher()]):
             rows=agent_runtime.find_running_agents(exclude_pids={99993})
         self.assertEqual(rows,[])
+
+    def test_virtualenv_launcher_parent_is_deduplicated(self):
+        script = str(Path(tempfile.gettempdir()) / "MAA-Agent_0920" / "app" / "agent.py")
+        class FakeProc:
+            def __init__(self, pid, ppid):
+                self.pid = pid
+                self._ppid = ppid
+                self.info = {"pid": pid, "name": "pythonw.exe"}
+            def name(self): return "pythonw.exe"
+            def cmdline(self): return ["pythonw.exe", script]
+            def cwd(self): return tempfile.gettempdir()
+            def create_time(self): return 100.0
+            def ppid(self): return self._ppid
+        parent = FakeProc(99996, 1)
+        child = FakeProc(99997, 99996)
+        with patch.object(agent_runtime.psutil, "process_iter", return_value=[parent, child]):
+            rows = agent_runtime.find_running_agents()
+        self.assertEqual([row["pid"] for row in rows], [99997])
+
+    def test_migrated_installation_accepts_legacy_root_agent(self):
+        base = Path(tempfile.gettempdir()) / "MAA-Agent_migrated"
+        legacy = base / "agent.py"
+        row = {"pid": 99994, "name": "pythonw.exe", "script": str(legacy), "create_time": 100.0}
+        with patch.object(agent_runtime, "read_runtime_record", return_value=None), \
+             patch.object(agent_runtime, "find_running_agents", return_value=[row]):
+            found = agent_runtime.validated_agent_for_dir(base)
+        self.assertEqual(found, row)
+        self.assertTrue(agent_runtime.is_script_for_installation(legacy, base))
+        self.assertTrue(agent_runtime.is_script_for_installation(base / "app" / "agent.py", base))
+        self.assertFalse(agent_runtime.is_script_for_installation(base.parent / "MAA-Agent_other" / "agent.py", base))
+
+    def test_stop_revalidates_the_detected_legacy_script(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td) / "MAA-Agent_migrated"
+            base.mkdir()
+            legacy = base / "agent.py"
+            row = {"pid": 99995, "name": "pythonw.exe", "script": str(legacy), "create_time": 100.0}
+            with patch.object(agent_runtime, "validated_agent_for_dir", return_value=row), \
+                 patch.object(agent_runtime, "agent_process_info", return_value=None) as process_info:
+                result = agent_runtime.request_stop(base, timeout_seconds=0.1)
+            self.assertEqual(result.status, "stopped")
+            process_info.assert_called_with(99995, legacy)
 
     def test_notification_drill_catalog_avoids_internal_jargon(self):
         import notification_drill

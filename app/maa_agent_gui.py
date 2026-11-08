@@ -27,7 +27,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import psutil
 
-from agent_runtime import AgentMutex, agent_script_path, find_running_agents, request_stop, validated_agent_for_dir
+from agent_runtime import AgentMutex, agent_script_path, find_running_agents, is_script_for_installation, request_stop, validated_agent_for_dir
 from schedule_utils import add_override, effective_occurrences, remove_override
 from diagnostic_commands import enqueue as enqueue_diagnostic
 from news_monitor import load_news_cache, refresh_news_cache
@@ -464,7 +464,7 @@ def start_agent_process() -> tuple[bool, str]:
     running = validated_agent_for_dir(BASE_DIR)
     if running:
         return False, f"Agent 已在运行（PID {running['pid']}）。"
-    others = [row for row in find_running_agents() if not _same_path(row["script"], agent_script_path(BASE_DIR))]
+    others = [row for row in find_running_agents() if not is_script_for_installation(row["script"], BASE_DIR)]
     if others:
         return False, f"检测到另一份 Agent：{others[0]['script']}（PID {others[0]['pid']}）。"
     try:
@@ -1554,7 +1554,7 @@ class ManagerApp:
 
     def refresh_dashboard(self):
         row = validated_agent_for_dir(BASE_DIR)
-        others = [x for x in find_running_agents() if not _same_path(x["script"], agent_script_path(BASE_DIR))]
+        others = [x for x in find_running_agents() if not is_script_for_installation(x["script"], BASE_DIR)]
         if row:
             try:
                 elapsed = datetime.now().timestamp() - row["create_time"]

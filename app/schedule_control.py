@@ -107,7 +107,7 @@ def run_gui():
         from tkinter import messagebox, simpledialog, ttk
     except Exception as exc:
         print(f"Tkinter GUI 不可用：{exc}")
-        print("可使用 CLI：python schedule_control.py list")
+        print("可使用 CLI：python app/schedule_control.py list")
         return 2
 
     cfg = load_config()
