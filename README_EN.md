@@ -4,6 +4,8 @@ English | [简体中文](README.md)
 
 MAA Agent is a Windows-only watchdog, alerting service, and desktop manager for two MAA instances. It determines whether scheduled MAA jobs actually started, completed, or reached a terminal failure by reading MAA logs and Windows runtime state. Actionable incidents can be sent to a phone through Bark, while the desktop GUI provides schedules, resource history, official notices, configuration, and logs in one place.
 
+Current stable version: **v1.0.0** (the root [`VERSION`](VERSION) file and GitHub Releases are authoritative).
+
 > This is an independent companion project and is not an official MAA project. Install and configure MAA first. The current release is designed around an MAA1/MAA2 setup.
 
 ## Features
@@ -130,6 +132,8 @@ Contributors and future coding agents should read `AGENTS.md` first. Standard ve
 ```
 
 `scripts\build_release.ps1` builds a release archive from Git-tracked files and excludes internal handoff material, development roadmaps, and all machine-local data.
+
+The version is maintained only in the root `VERSION` file. Before publishing an upgrade, update it using semantic versioning and synchronize the release notes, Git tag, and GitHub Release. The GUI and packaging script read it automatically.
 
 ## Author and acknowledgement
 

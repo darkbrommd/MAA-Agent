@@ -56,7 +56,9 @@ class NewsMonitorTests(unittest.TestCase):
 
 class GuiFormattingTests(unittest.TestCase):
     def test_public_release_metadata_and_portable_copilot_scripts(self):
-        self.assertEqual(maa_agent_gui.APP_VERSION, "1.0.0")
+        version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+        self.assertRegex(version, r"^\d+\.\d+\.\d+$")
+        self.assertEqual(maa_agent_gui.APP_VERSION, version)
         self.assertEqual(maa_agent_gui.AUTHOR_NAME, "Taylor Yu")
         self.assertEqual(maa_agent_gui.AUTHOR_URL, "https://github.com/darkbrommd")
         requirements = (ROOT / "requirements-gui.txt").read_text(encoding="utf-8").lower()

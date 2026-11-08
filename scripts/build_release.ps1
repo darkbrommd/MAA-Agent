@@ -1,10 +1,16 @@
 param(
-    [string]$Version = "1.0.0",
+    [string]$Version = "",
     [string]$OutputDirectory = "dist"
 )
 
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $Version = (Get-Content -LiteralPath (Join-Path $projectRoot "VERSION") -Raw).Trim()
+}
+if ($Version -notmatch '^\d+\.\d+\.\d+$') {
+    throw "VERSION must use MAJOR.MINOR.PATCH format: $Version"
+}
 $outputRoot = Join-Path $projectRoot $OutputDirectory
 $packageName = "MAA-Agent-v$Version-Windows-source"
 $stageRoot = Join-Path $outputRoot $packageName
