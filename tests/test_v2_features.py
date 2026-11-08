@@ -83,6 +83,16 @@ class GuiFormattingTests(unittest.TestCase):
         launcher = (ROOT / "MAA-Agent-GUI.bat").read_text(encoding="utf-8")
         self.assertIn("tools\\windows\\setup.ps1", launcher)
         self.assertIn("tools\\windows\\maa_agent_gui_hidden.vbs", launcher)
+        self.assertIn("WindowsPowerShell\\v1.0\\powershell.exe", launcher)
+
+    def test_windows_launchers_use_crlf(self):
+        scripts = [ROOT / "MAA-Agent-GUI.bat"]
+        scripts.extend((ROOT / "tools" / "windows").glob("*.bat"))
+        scripts.extend((ROOT / "tools" / "windows").glob("*.cmd"))
+        scripts.extend((ROOT / "tools" / "windows").glob("*.vbs"))
+        for script in scripts:
+            data = script.read_bytes()
+            self.assertNotIn(b"\n", data.replace(b"\r\n", b""), script)
 
     def test_dashboard_log_cutoff_does_not_change_source_text(self):
         text = "[2026-09-22 00:10:00] old\n[2026-09-22 00:11:00] new"

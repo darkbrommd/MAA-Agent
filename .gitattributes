@@ -1,0 +1,5 @@
+# Windows command hosts require CRLF reliably. Keep these bytes unchanged in
+# Git archives as well as in local checkouts.
+*.bat -text whitespace=cr-at-eol
+*.cmd -text whitespace=cr-at-eol
+*.vbs -text whitespace=cr-at-eol

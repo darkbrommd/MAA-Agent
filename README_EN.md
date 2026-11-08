@@ -83,7 +83,7 @@ Local `config.json`, secrets, logs, runtime state, backups, and the virtual envi
 
 ## Development and tests
 
-Current stable version: **v1.1.2**. The root [`VERSION`](VERSION) file is authoritative.
+Current stable version: **v1.1.3**. The root [`VERSION`](VERSION) file is authoritative.
 
 ```powershell
 .\.venv\Scripts\python.exe -m compileall -q .
