@@ -30,7 +30,7 @@ VSVersionInfo(
   ffi=FixedFileInfo(filevers=($versionTuple), prodvers=($versionTuple), mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)),
   kids=[StringFileInfo([StringTable('080404b0', [
     StringStruct('CompanyName', 'Taylor Yu'),
-    StringStruct('FileDescription', 'MAA Agent Manager and Monitor'),
+    StringStruct('FileDescription', 'MAA Agent'),
     StringStruct('FileVersion', '$version.0'),
     StringStruct('InternalName', 'MAA-Agent'),
     StringStruct('LegalCopyright', 'Copyright (c) Taylor Yu'),

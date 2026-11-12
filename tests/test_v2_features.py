@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -75,6 +76,7 @@ class GuiFormattingTests(unittest.TestCase):
         self.assertEqual(maa_agent_gui.APP_VERSION, version)
         self.assertEqual(maa_agent_gui.AUTHOR_NAME, "Taylor Yu")
         self.assertEqual(maa_agent_gui.AUTHOR_URL, "https://github.com/darkbrommd")
+        self.assertEqual(maa_agent_gui.APP_DISPLAY_NAME, "MAA Agent")
         self.assertEqual(maa_agent_gui.BASE_DIR, ROOT)
         self.assertEqual(agent.BASE_DIR, ROOT)
         self.assertEqual(agent.agent_process_info.__module__, "agent_runtime")
@@ -96,6 +98,32 @@ class GuiFormattingTests(unittest.TestCase):
         self.assertIn("tools\\windows\\setup.ps1", launcher)
         self.assertIn("tools\\windows\\maa_agent_gui_hidden.vbs", launcher)
         self.assertIn("WindowsPowerShell\\v1.0\\powershell.exe", launcher)
+        user_readme = ROOT / "Readme（使用前请阅读）.txt"
+        self.assertTrue(user_readme.is_file())
+        self.assertIn("MAA-Agent.exe", user_readme.read_text(encoding="utf-8"))
+        build_script = (ROOT / "scripts" / "build_exe.ps1").read_text(encoding="utf-8")
+        self.assertIn("StringStruct('FileDescription', 'MAA Agent')", build_script)
+        self.assertNotIn("Manager and Monitor", build_script)
+        release_script = (ROOT / "scripts" / "build_release.ps1").read_text(encoding="utf-8")
+        self.assertIn("core.quotepath=false", release_script)
+
+    def test_shortcut_names_are_migrated_to_short_app_name(self):
+        with tempfile.TemporaryDirectory() as td, patch.dict(
+            os.environ, {"USERPROFILE": td, "APPDATA": str(Path(td) / "AppData")}
+        ):
+            old_paths = (
+                maa_agent_gui.legacy_startup_shortcut_path(),
+                maa_agent_gui.desktop_shortcut_path(legacy=True),
+                maa_agent_gui.start_menu_shortcut_path(legacy=True),
+            )
+            for path in old_paths:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+            with patch.object(maa_agent_gui, "create_windows_shortcut") as create:
+                maa_agent_gui.migrate_legacy_shortcuts()
+            targets = [call.args[0].name for call in create.call_args_list]
+            self.assertEqual(targets, ["MAA Agent.lnk"] * 3)
+            self.assertTrue(all(not path.exists() for path in old_paths))
 
     def test_windows_launchers_use_crlf(self):
         scripts = [ROOT / "MAA-Agent-GUI.bat"]
@@ -110,6 +138,7 @@ class GuiFormattingTests(unittest.TestCase):
         fake_python = ROOT / ".venv" / "Scripts" / "python.exe"
         with patch.object(maa_agent_gui, "validated_agent_for_dir", return_value=None), \
              patch.object(maa_agent_gui, "find_running_agents", return_value=[]), \
+             patch.object(maa_agent_gui, "agent_entry_path", return_value=APP_DIR / "agent.py"), \
              patch.object(maa_agent_gui, "_agent_python", return_value=fake_python), \
              patch.object(maa_agent_gui.subprocess, "Popen") as popen:
             ok, _message = maa_agent_gui.start_agent_process()

@@ -43,6 +43,7 @@ VERSION_PATH = version_path(BASE_DIR)
 APP_VERSION = VERSION_PATH.read_text(encoding="utf-8").strip()
 AUTHOR_NAME = "Taylor Yu"
 AUTHOR_URL = "https://github.com/darkbrommd"
+APP_DISPLAY_NAME = "MAA Agent"
 CONFIG_PATH = config_path(BASE_DIR)
 LOG_DIR = BASE_DIR / "logs"
 STATE_DIR = BASE_DIR / "state"
@@ -155,7 +156,7 @@ def create_windows_shortcut(path: Path, *, startup: bool = False) -> None:
         f"$s.Arguments='{ps(arguments)}';"
         f"$s.WorkingDirectory='{ps(str(BASE_DIR))}';"
         f"$s.IconLocation='{ps(str(ICON_ICO))},0';"
-        "$s.Description='MAA Agent 管理器';$s.Save()"
+        f"$s.Description='{APP_DISPLAY_NAME}';$s.Save()"
     )
     encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
     completed = subprocess.run(
@@ -176,7 +177,34 @@ def startup_marker_path() -> Path:
 
 
 def startup_shortcut_path() -> Path:
-    return Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "MAA Agent 管理器.lnk"
+    return Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / f"{APP_DISPLAY_NAME}.lnk"
+
+
+def legacy_startup_shortcut_path() -> Path:
+    return startup_shortcut_path().with_name("MAA Agent 管理器.lnk")
+
+
+def desktop_shortcut_path(*, legacy: bool = False) -> Path:
+    name = "MAA Agent 管理器.lnk" if legacy else f"{APP_DISPLAY_NAME}.lnk"
+    return Path(os.environ.get("USERPROFILE", str(Path.home()))) / "Desktop" / name
+
+
+def start_menu_shortcut_path(*, legacy: bool = False) -> Path:
+    name = "MAA Agent 管理器.lnk" if legacy else f"{APP_DISPLAY_NAME}.lnk"
+    return Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / name
+
+
+def migrate_legacy_shortcuts() -> None:
+    pairs = (
+        (legacy_startup_shortcut_path(), startup_shortcut_path(), True),
+        (desktop_shortcut_path(legacy=True), desktop_shortcut_path(), False),
+        (start_menu_shortcut_path(legacy=True), start_menu_shortcut_path(), False),
+    )
+    for old, new, startup in pairs:
+        if not old.exists():
+            continue
+        create_windows_shortcut(new, startup=startup)
+        old.unlink(missing_ok=True)
 
 
 def filter_log_text(text: str, mode: str) -> str:
@@ -516,10 +544,14 @@ class ManagerApp:
         enable_hidpi_awareness()
         set_windows_app_identity()
         self.root = tk.Tk()
-        self.root.title("MAA Agent 管理器")
+        self.root.title(APP_DISPLAY_NAME)
         self.root.geometry("1220x820")
         self.root.minsize(1040, 700)
         self.cfg = load_config()
+        try:
+            migrate_legacy_shortcuts()
+        except Exception:
+            pass
         self.gui_state = load_gui_state()
         self._dashboard_log_cleared_at = None
         self._apply_window_icon()
@@ -712,7 +744,7 @@ class ManagerApp:
             ratio = index / 63
             color = tuple(round(left[i] + (right[i] - left[i]) * ratio) for i in range(3))
             self.header.create_rectangle(width * index / 64, 0, width * (index + 1) / 64 + 1, height, outline="", fill="#%02x%02x%02x" % color)
-        self.header.create_text(18, height / 2, text="MAA Agent 管理器", anchor="w", fill="#ffffff", font=("Microsoft YaHei UI", 19, "bold"))
+        self.header.create_text(18, height / 2, text=APP_DISPLAY_NAME, anchor="w", fill="#ffffff", font=("Microsoft YaHei UI", 19, "bold"))
         self.header.create_text(width - 18, height / 2, text=str(BASE_DIR), anchor="e", fill="#f1f5f9", font=("Microsoft YaHei UI", 9))
 
     def _build_dashboard(self):
@@ -1178,7 +1210,7 @@ class ManagerApp:
                 pystray.MenuItem("退出管理器（Agent 继续运行）", lambda: self.root.after(0, self.exit_gui)),
                 pystray.MenuItem("退出 Agent 和管理器", lambda: self.root.after(0, self.exit_all)),
             )
-            self.tray_icon = pystray.Icon("maa_agent_manager", image, "MAA Agent 管理器", menu)
+            self.tray_icon = pystray.Icon("maa_agent_manager", image, APP_DISPLAY_NAME, menu)
             threading.Thread(target=self.tray_icon.run, daemon=True, name="maa-agent-tray").start()
             self.tray_ready = True
         except Exception as exc:
@@ -2041,7 +2073,7 @@ class ManagerApp:
         detail.refresh_scrollregion()
 
     def load_settings(self):
-        self.start_with_windows_var.set(startup_shortcut_path().exists() or startup_marker_path().exists())
+        self.start_with_windows_var.set(startup_shortcut_path().exists() or legacy_startup_shortcut_path().exists() or startup_marker_path().exists())
         self.start_agent_with_gui_var.set(bool(self.cfg.get("gui_start_agent_on_launch",True)))
         self.start_minimized_var.set(bool(self.cfg.get("gui_start_minimized",True)))
         self.dark_mode_var.set(bool(self.cfg.get("gui_dark_mode",True)))
@@ -2111,9 +2143,10 @@ class ManagerApp:
             marker=startup_marker_path()
             if self.start_with_windows_var.get():
                 create_windows_shortcut(startup_shortcut_path(),startup=True)
+                legacy_startup_shortcut_path().unlink(missing_ok=True)
                 marker.unlink(missing_ok=True)
             else:
-                startup_shortcut_path().unlink(missing_ok=True); marker.unlink(missing_ok=True)
+                startup_shortcut_path().unlink(missing_ok=True); legacy_startup_shortcut_path().unlink(missing_ok=True); marker.unlink(missing_ok=True)
         except Exception as exc:
             messagebox.showerror("保存失败",str(exc),parent=self.root); return
         if old_dark != self.cfg["gui_dark_mode"]:
@@ -2125,9 +2158,11 @@ class ManagerApp:
 
     def install_shortcuts(self):
         try:
-            desktop=Path(os.environ.get("USERPROFILE",str(Path.home())))/"Desktop"/"MAA Agent 管理器.lnk"
-            startmenu=Path(os.environ.get("APPDATA",""))/"Microsoft"/"Windows"/"Start Menu"/"Programs"/"MAA Agent 管理器.lnk"
+            desktop=desktop_shortcut_path()
+            startmenu=start_menu_shortcut_path()
             create_windows_shortcut(desktop); create_windows_shortcut(startmenu)
+            desktop_shortcut_path(legacy=True).unlink(missing_ok=True)
+            start_menu_shortcut_path(legacy=True).unlink(missing_ok=True)
             self._set_footer("桌面与开始菜单快捷方式已修复。")
         except Exception as exc:
             messagebox.showerror("快捷方式创建失败",str(exc),parent=self.root)

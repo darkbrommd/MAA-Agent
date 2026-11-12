@@ -17,7 +17,7 @@ $stageRoot = Join-Path $outputRoot $packageName
 $archivePath = Join-Path $outputRoot "$packageName.zip"
 $checksumPath = Join-Path $outputRoot "$packageName.sha256"
 
-$excludedFiles = @(".gitignore", "docs/internal/AGENTS.local.md", "MANIFEST.sha256")
+$excludedFiles = @(".gitattributes", ".gitignore", "AGENTS.md", "README.md", "docs/internal/AGENTS.local.md", "MANIFEST.sha256")
 $excludedPrefixes = @("scripts/", "docs/CHANGES_", "docs/ROADMAP", "docs/TEST_REPORT")
 
 function Test-ReleasePath([string]$RelativePath) {
@@ -39,7 +39,7 @@ if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $exePath -PathType Leaf
     throw "Executable build failed."
 }
 
-$trackedFiles = & git -C $projectRoot ls-files
+$trackedFiles = & git -C $projectRoot -c core.quotepath=false ls-files
 if ($LASTEXITCODE -ne 0) { throw "git ls-files failed" }
 $untrackedPublicFiles = @("docs/RELEASE_NOTES_v$Version.md")
 $releaseFiles = @($trackedFiles) + $untrackedPublicFiles | Sort-Object -Unique
