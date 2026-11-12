@@ -613,6 +613,30 @@ class AgentLogicTests(unittest.TestCase):
                 agent.check_scheduled_runs()
             self.assertEqual(calls,[])
 
+    def test_live_timer_change_does_not_create_previous_day_miss(self):
+        with isolated_agent({"maa_schedule":{"MAA1":["22:15"]},"maa_instance_dirs":{},"maa_gui_config_paths":{},"enable_scheduled_run_check":True,"scheduled_run_grace_minutes":20}):
+            FrozenDateTime.current = datetime(2026, 9, 22, 0, 30)
+            calls=[]
+            with patch.object(agent, "datetime", FrozenDateTime), \
+                 patch.object(agent, "schedule_monitoring_coverage_start", return_value=datetime(2026,9,21,21,0)), \
+                 patch.object(agent, "bark", side_effect=lambda *a,**k: calls.append((a,k))):
+                agent.check_scheduled_runs()
+            self.assertEqual(calls,[])
+
+    def test_future_timer_change_replaces_stale_unobserved_ledger_time(self):
+        with isolated_agent({"maa_schedule":{"MAA1":["04:15"]},"maa_instance_dirs":{},"maa_gui_config_paths":{},"enable_scheduled_run_check":True,"scheduled_run_grace_minutes":20}):
+            FrozenDateTime.current = datetime(2026, 9, 22, 4, 10)
+            with patch.object(agent, "datetime", FrozenDateTime), \
+                 patch.object(agent, "schedule_monitoring_coverage_start", return_value=datetime(2026,9,22,3,0)), \
+                 patch.object(agent, "bark", return_value=None):
+                data=agent.load_daily_stats()
+                data["schedule"]["expected_occurrences"]=["MAA1|2026-09-22 04:00"]
+                agent.save_daily_stats(data)
+                agent.check_scheduled_runs()
+                ledger=agent.load_daily_stats()["schedule"]["expected_occurrences"]
+                self.assertNotIn("MAA1|2026-09-22 04:00",ledger)
+                self.assertNotIn("MAA1|2026-09-22 04:15",ledger)
+
     def test_skipped_schedule_is_not_reported_missing(self):
         with isolated_agent({"maa_schedule":{"MAA1":["10:00"]},"enable_scheduled_run_check":True,"scheduled_run_grace_minutes":20,"schedule_override_keep_days":3650}) as base:
             schedule_utils.add_override(base,agent.cfg,"MAA1",datetime(2026,9,20,10,0),"skip")

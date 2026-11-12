@@ -2070,7 +2070,7 @@ def mark_scheduled_alert_sent(label,scheduled_dt):
     scheduled_alert_state_path(label,scheduled_dt).write_text(str(time.time()),encoding="utf-8")
 
 
-def _record_schedule_metadata(meta, skipped=None, unverified=None, expected_rows=None):
+def _record_schedule_metadata(meta, skipped=None, unverified=None, expected_rows=None, valid_rows=None, now_dt=None):
     data=load_daily_stats(); sch=data.setdefault("schedule",{}); sch["sources"]=meta or {}
     if skipped is not None:
         sch["skipped_overrides"]=skipped[-50:]
@@ -2081,6 +2081,28 @@ def _record_schedule_metadata(meta, skipped=None, unverified=None, expected_rows
         sch["unverified"]=existing[-50:]
     if expected_rows is not None:
         ledger=sch.setdefault("expected_occurrences",[])
+        if valid_rows is not None:
+            now_dt=now_dt or datetime.now(); today=now_dt.strftime("%Y-%m-%d")
+            valid={f"{row['label']}|{row['datetime']:%Y-%m-%d %H:%M}" for row in valid_rows if not row.get("skipped")}
+            observed=set()
+            for label, values in data.get("observed_runs",{}).items():
+                for item in values:
+                    occurrence=_observed_occurrence_text(item)
+                    if occurrence:
+                        observed.add(f"{label}|{occurrence}")
+            reconciled=[]
+            for item in ledger:
+                text=str(item)
+                try:
+                    label, occurrence=text.split("|",1)
+                    scheduled_dt=datetime.strptime(occurrence,"%Y-%m-%d %H:%M")
+                except Exception:
+                    continue
+                if scheduled_dt.strftime("%Y-%m-%d") != today:
+                    continue
+                if text in valid or text in observed or scheduled_alert_already_sent(label,scheduled_dt) or incident_is_open(f"schedule|{label}|{occurrence}"):
+                    reconciled.append(text)
+            ledger=reconciled
         for row in expected_rows:
             text=f"{row['label']}|{row['datetime']:%Y-%m-%d %H:%M}"
             if text not in ledger: ledger.append(text)
@@ -2094,7 +2116,10 @@ def check_scheduled_runs():
     refresh_schedule_cache()
     now_dt=datetime.now(); grace=float(cfg.get("scheduled_run_grace_minutes",20))
     day_start=now_dt.replace(hour=0,minute=0,second=0,microsecond=0)
-    start=day_start-timedelta(hours=2); end=now_dt+timedelta(minutes=1)
+    # A live timer edit must apply from today forward, never retroactively to
+    # yesterday. The former two-hour lookback caused a new 22:15 timer to be
+    # invented for the previous day and reported as missed.
+    start=day_start; end=day_start+timedelta(days=1)-timedelta(microseconds=1)
     occurrences,meta=effective_occurrences(BASE_DIR,cfg,start,end)
     with_skipped,_=effective_occurrences(BASE_DIR,cfg,start,end,include_skipped=True)
     skipped=[]
@@ -2136,7 +2161,8 @@ def check_scheduled_runs():
             continue
         abnormal.append(row)
     expected_rows=[row for row in occurrences if row["datetime"]<=now_dt+timedelta(minutes=1)]
-    _record_schedule_metadata(meta,skipped=skipped,unverified=unverified,expected_rows=expected_rows)
+    _record_schedule_metadata(meta,skipped=skipped,unverified=unverified,expected_rows=expected_rows,
+                              valid_rows=with_skipped,now_dt=now_dt)
     if not abnormal:
         return
     details=[]

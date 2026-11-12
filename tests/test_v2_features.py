@@ -94,6 +94,20 @@ class GuiFormattingTests(unittest.TestCase):
             data = script.read_bytes()
             self.assertNotIn(b"\n", data.replace(b"\r\n", b""), script)
 
+    def test_background_agent_uses_hidden_console_python(self):
+        fake_python = ROOT / ".venv" / "Scripts" / "python.exe"
+        with patch.object(maa_agent_gui, "validated_agent_for_dir", return_value=None), \
+             patch.object(maa_agent_gui, "find_running_agents", return_value=[]), \
+             patch.object(maa_agent_gui, "_agent_python", return_value=fake_python), \
+             patch.object(maa_agent_gui.subprocess, "Popen") as popen:
+            ok, _message = maa_agent_gui.start_agent_process()
+        self.assertTrue(ok)
+        command = popen.call_args.args[0]
+        self.assertEqual(Path(command[0]), fake_python)
+        self.assertEqual(Path(command[1]), APP_DIR / "agent.py")
+        self.assertTrue(popen.call_args.kwargs["creationflags"] & maa_agent_gui.NO_WINDOW)
+        self.assertFalse(popen.call_args.kwargs["creationflags"] & maa_agent_gui.DETACHED)
+
     def test_dashboard_log_cutoff_does_not_change_source_text(self):
         text = "[2026-09-22 00:10:00] old\n[2026-09-22 00:11:00] new"
         filtered = maa_agent_gui.log_text_after(text, datetime(2026, 9, 22, 0, 10, 30))

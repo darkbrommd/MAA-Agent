@@ -3,6 +3,6 @@ Set FSO = CreateObject("Scripting.FileSystemObject")
 ToolsDir = FSO.GetParentFolderName(WScript.ScriptFullName)
 BaseDir = FSO.GetAbsolutePathName(FSO.BuildPath(ToolsDir, "..\.."))
 WshShell.CurrentDirectory = BaseDir
-PythonW = FSO.BuildPath(BaseDir, ".venv\Scripts\pythonw.exe")
+PythonExe = FSO.BuildPath(BaseDir, ".venv\Scripts\python.exe")
 AgentPy = FSO.BuildPath(BaseDir, "app\agent.py")
-WshShell.Run """" & PythonW & """ """ & AgentPy & """", 0, False
+WshShell.Run """" & PythonExe & """ """ & AgentPy & """", 0, False

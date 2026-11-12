@@ -460,6 +460,16 @@ def _pythonw() -> Path:
     return Path(sys.executable)
 
 
+def _agent_python() -> Path:
+    """Use the console-subsystem venv launcher without showing a console."""
+    bundled = BASE_DIR / ".venv" / "Scripts" / "python.exe"
+    if bundled.exists():
+        return bundled
+    current = Path(sys.executable)
+    console = current.with_name("python.exe")
+    return console if console.exists() else current
+
+
 def start_agent_process() -> tuple[bool, str]:
     running = validated_agent_for_dir(BASE_DIR)
     if running:
@@ -469,9 +479,9 @@ def start_agent_process() -> tuple[bool, str]:
         return False, f"检测到另一份 Agent：{others[0]['script']}（PID {others[0]['pid']}）。"
     try:
         subprocess.Popen(
-            [str(_pythonw()), str(agent_script_path(BASE_DIR))],
+            [str(_agent_python()), str(agent_script_path(BASE_DIR))],
             cwd=str(BASE_DIR),
-            creationflags=NO_WINDOW | DETACHED | NEW_GROUP,
+            creationflags=NO_WINDOW | NEW_GROUP,
             close_fds=True,
         )
         return True, "启动请求已发送。"
