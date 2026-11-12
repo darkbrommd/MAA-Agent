@@ -23,7 +23,7 @@ tools\windows\run_regression_tests.bat
 
 ## 2. 首次配置与 GUI
 
-在没有 `config.json` 的全新副本中双击 `MAA-Agent-GUI.bat`：
+在没有 `config.json` 的全新副本中双击 `MAA-Agent.exe`（另用 BAT 验证源码备用路径）：
 
 1. 自动安装脚本应能找到或创建 `.venv`；
 2. 首次向导默认选择一个 MAA；
@@ -92,7 +92,7 @@ tools\windows\test_all_notifications.bat
 
 发布前运行 `scripts\build_release.ps1`，然后确认：
 
-- ZIP 中包含 `MAA-Agent-GUI.bat`、`tools/windows/`、中英文 README、公开 `AGENTS.md` 和 `CONTRIBUTING.md`；
-- ZIP 中不包含 `config.json`、`AGENTS.local.md`、`.venv/`、`state/`、`logs/`、`backups/` 或密钥；
+- ZIP 中包含带图标和版本信息的 `MAA-Agent.exe`、备用 `MAA-Agent-GUI.bat`、`tools/windows/`、中英文 README、公开 `AGENTS.md` 和 `docs/CONTRIBUTING.md`；
+- ZIP 中不包含本机 `config.json`、`docs/internal/AGENTS.local.md`、`.venv/`、`state/`、`logs/`、`backups/` 或密钥；
 - SHA-256 文件与 ZIP 实际摘要一致；
-- 解压到一个新的普通目录后，主启动器仍能找到安装脚本和 GUI。
+- 解压到一个新的普通目录后，EXE 能启动管理器和后台 Agent，BAT 备用入口仍能找到安装脚本和 GUI。

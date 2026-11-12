@@ -43,7 +43,7 @@ def _category(name: str, cmdline: list[str], maa_names: set[str], mumu_names: se
         return "maa", "MAA"
     if lower in mumu_names or normal.startswith(("mumu", "nemu")):
         return "mumu", "MuMu"
-    if normal.startswith("python") and "agent.py" in command:
+    if (normal.startswith("python") and "agent.py" in command) or (normal == "maa-agent" and "--maa-agent-background" in command):
         return "agent", "MAA Agent"
     if lower in heavy_names or normal in {_normal_name(x) for x in heavy_names}:
         return "heavy_known", name or normal

@@ -4,7 +4,7 @@ MAA Agent 是一个 Windows 桌面工具，用来查看 MAA 的计划任务、�
 
 这份文件写给修改代码的贡献者和 AI 助手。先读与当前任务相关的部分即可；更完整的使用说明在 `README.md` 和 `docs/` 中。
 
-如果根目录存在 `AGENTS.local.md`，请在本文件之后阅读它。该文件只保存本机路径、维护习惯和临时排查记录，不进入 Git；项目行为、隐私和发布约定仍以公开文档为基础。
+如果存在 `docs/internal/AGENTS.local.md`，请在本文件之后阅读它。该文件只保存本机路径、维护习惯和临时排查记录，不进入 Git；项目行为、隐私和发布约定仍以公开文档为基础。
 
 ## 开始修改前
 
@@ -21,6 +21,10 @@ MAA Agent 是一个 Windows 桌面工具，用来查看 MAA 的计划任务、�
 | `tools/windows/` | Windows 辅助入口；根目录只保留日常启动器。 |
 | `tests/` | 自动回归测试。 |
 | `docs/` | 部署、操作、测试和历史说明。 |
+| `config/` | 可提交的配置模板，以及不入 Git 的本机配置。 |
+| `requirements/` | 源码运行所需的依赖清单。 |
+| `metadata/` | 稳定版本号等发布元数据。 |
+| `scripts/build_exe.ps1` | 使用 PyInstaller 生成带图标和版本信息的单文件 `MAA-Agent.exe`。 |
 
 Agent 是后台监控主体，GUI 是控制和观察界面。隐藏或关闭 GUI 不等于停止 Agent。
 
@@ -46,13 +50,13 @@ Agent 是后台监控主体，GUI 是控制和观察界面。隐藏或关闭 GUI
 ### 配置与本地状态
 
 - 默认配置一个 MAA；菜单、托盘、设置和通知测试都要能处理没有 MAA2 的情况。
-- 生产配置来自 `config.json`。首次运行向导只在该文件不存在时启动，不覆盖已有配置。
+- 新版生产配置来自 `config/config.json`；升级用户原有的根目录 `config.json` 仍受支持。首次运行向导只在两处均无配置时启动，不覆盖已有配置。
 - `state/` 中的 offset、计划状态、资源历史和通知队列需要兼容 Agent 重启；写入状态时优先沿用“临时文件 + replace”的原子方式。
-- 不同安装目录的 `config.json`、`state/` 和 `logs/` 不应混用。
+- 不同安装目录的配置、`state/` 和 `logs/` 不应混用。
 
 ## 隐私与安全
 
-- `config.json`、`.venv/`、`state/`、`logs/`、`backups/` 和 `disabled_alerts/` 都是本机数据，不进入版本库或 Release。
+- `config/config.json`（及旧版根目录 `config.json`）、`.venv/`、`state/`、`logs/`、`backups/` 和 `disabled_alerts/` 都是本机数据，不进入版本库或 Release。
 - Bark Key、DeepSeek Key、GitHub token、真实日志和用户的本机路径不要写入受跟踪文件、测试样例或提交信息。
 - 示例配置使用明显占位符；日志和异常中不要输出密钥值。
 - 不改动用户的 VPN、代理、DNS、TUN、防火墙或其他系统网络设置。连接失败时保留现场并报告结果。
@@ -88,9 +92,9 @@ Agent 是后台监控主体，GUI 是控制和观察界面。隐藏或关闭 GUI
 
 ## 文档、提交与发布
 
-- 用户操作变化同步更新 `README.md`、`README_EN.md` 或 `docs/` 中对应页面。
+- 用户操作变化同步更新根目录简明 `README.md`、`docs/README_EN.md` 或 `docs/` 中对应页面。
 - 保持提交聚焦，并在交付说明中列出验证结果。
-- 人类贡献流程见 `CONTRIBUTING.md`。
-- 根目录 `VERSION` 是稳定版本号的唯一来源，使用 `MAJOR.MINOR.PATCH`。
+- 人类贡献流程见 `docs/CONTRIBUTING.md`。
+- `metadata/VERSION` 是稳定版本号的唯一来源，使用 `MAJOR.MINOR.PATCH`。
 - 发布版本时同步更新中英文 README、`docs/RELEASE_NOTES_vX.Y.Z.md`、Git 标签和 GitHub Release，并上传 ZIP 与 SHA-256。
 - 已发布的标签保持不动；修复已经发布的内容时创建新版本。

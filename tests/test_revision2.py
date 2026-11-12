@@ -821,6 +821,23 @@ class AgentLogicTests(unittest.TestCase):
             row=agent.find_other_maa_agent_process()
         self.assertIsNone(row)
 
+    def test_packaged_background_mode_is_recognized_but_manager_is_not(self):
+        executable = Path(tempfile.gettempdir()) / "MAA-Agent-packaged" / "MAA-Agent.exe"
+
+        class FakeProcess:
+            pid = 99996
+            def __init__(self, background): self.background = background
+            def name(self): return "MAA-Agent.exe"
+            def cmdline(self):
+                return [str(executable)] + (["--maa-agent-background"] if self.background else [])
+            def exe(self): return str(executable)
+            def ppid(self): return 100
+            def create_time(self): return 200.0
+
+        row = agent_runtime.process_agent_info(FakeProcess(True))
+        self.assertEqual(Path(row["script"]).resolve(), executable.resolve())
+        self.assertIsNone(agent_runtime.process_agent_info(FakeProcess(False)))
+
     def test_powershell_text_argument_is_not_a_running_agent(self):
         path=str(Path(tempfile.gettempdir())/"MAA-Agent_0920"/"agent.py")
         self.assertIsNone(agent_runtime.script_from_cmdline(["pwsh.exe","-Command",path],tempfile.gettempdir(),"pwsh.exe"))

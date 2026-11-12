@@ -8,7 +8,7 @@ if (Test-Path -LiteralPath $venvPython) {
 
     Write-Host ""
     Write-Host "MAA Agent is repairing its local environment." -ForegroundColor Cyan
-    & $venvPython -m pip install -r (Join-Path $projectRoot "requirements-gui.txt")
+    & $venvPython -m pip install -r (Join-Path $projectRoot "requirements\gui.txt")
     if ($LASTEXITCODE -ne 0) { throw "Dependency installation failed." }
     Write-Host "Dependencies are ready." -ForegroundColor Green
     exit 0
@@ -50,7 +50,7 @@ $selectedArguments = @($selected.Arguments)
 if ($LASTEXITCODE -ne 0) { throw "Failed to create .venv." }
 & $venvPython -m pip install --upgrade pip
 if ($LASTEXITCODE -ne 0) { throw "Failed to update pip." }
-& $venvPython -m pip install -r (Join-Path $projectRoot "requirements-gui.txt")
+& $venvPython -m pip install -r (Join-Path $projectRoot "requirements\gui.txt")
 if ($LASTEXITCODE -ne 0) { throw "Dependency installation failed." }
 
 Write-Host "Setup is complete. The first-run wizard will open next." -ForegroundColor Green

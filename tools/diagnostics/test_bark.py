@@ -2,7 +2,10 @@ import json
 import requests
 from pathlib import Path
 
-CONFIG_PATH = Path(__file__).resolve().parents[2] / "config.json"
+BASE_DIR = Path(__file__).resolve().parents[2]
+CONFIG_PATH = BASE_DIR / "config" / "config.json"
+if not CONFIG_PATH.exists():
+    CONFIG_PATH = BASE_DIR / "config.json"
 
 with open(CONFIG_PATH, "r", encoding="utf-8") as f:
     cfg = json.load(f)

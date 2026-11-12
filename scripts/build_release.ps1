@@ -6,18 +6,18 @@ param(
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 if ([string]::IsNullOrWhiteSpace($Version)) {
-    $Version = (Get-Content -LiteralPath (Join-Path $projectRoot "VERSION") -Raw).Trim()
+    $Version = (Get-Content -LiteralPath (Join-Path $projectRoot "metadata\VERSION") -Raw).Trim()
 }
 if ($Version -notmatch '^\d+\.\d+\.\d+$') {
     throw "VERSION must use MAJOR.MINOR.PATCH format: $Version"
 }
 $outputRoot = Join-Path $projectRoot $OutputDirectory
-$packageName = "MAA-Agent-v$Version-Windows-source"
+$packageName = "MAA-Agent-v$Version-Windows"
 $stageRoot = Join-Path $outputRoot $packageName
 $archivePath = Join-Path $outputRoot "$packageName.zip"
 $checksumPath = Join-Path $outputRoot "$packageName.sha256"
 
-$excludedFiles = @(".gitignore", "AGENTS.local.md", "MANIFEST.sha256")
+$excludedFiles = @(".gitignore", "docs/internal/AGENTS.local.md", "MANIFEST.sha256")
 $excludedPrefixes = @("scripts/", "docs/CHANGES_", "docs/ROADMAP", "docs/TEST_REPORT")
 
 function Test-ReleasePath([string]$RelativePath) {
@@ -34,6 +34,11 @@ if (Test-Path -LiteralPath $archivePath) { Remove-Item -LiteralPath $archivePath
 if (Test-Path -LiteralPath $checksumPath) { Remove-Item -LiteralPath $checksumPath -Force }
 New-Item -ItemType Directory -Path $stageRoot -Force | Out-Null
 
+$exePath = & (Join-Path $PSScriptRoot "build_exe.ps1")
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
+    throw "Executable build failed."
+}
+
 $trackedFiles = & git -C $projectRoot ls-files
 if ($LASTEXITCODE -ne 0) { throw "git ls-files failed" }
 $untrackedPublicFiles = @("docs/RELEASE_NOTES_v$Version.md")
@@ -47,6 +52,7 @@ foreach ($relativePath in $releaseFiles) {
     New-Item -ItemType Directory -Path (Split-Path -Parent $targetPath) -Force | Out-Null
     Copy-Item -LiteralPath $sourcePath -Destination $targetPath
 }
+Copy-Item -LiteralPath $exePath -Destination (Join-Path $stageRoot "MAA-Agent.exe")
 
 $forbiddenNames = @("config.json", "config.json.bak", "agent.log", "decision.log")
 $forbiddenDirectories = @(".git", ".venv", "state", "logs", "backups", "disabled_alerts", "__pycache__", "scripts")

@@ -27,22 +27,23 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import psutil
 
-from agent_runtime import AgentMutex, agent_script_path, find_running_agents, is_script_for_installation, request_stop, validated_agent_for_dir
+from agent_runtime import AgentMutex, PACKAGED_AGENT_FLAG, agent_entry_path, find_running_agents, is_script_for_installation, request_stop, validated_agent_for_dir
 from schedule_utils import add_override, effective_occurrences, remove_override
 from diagnostic_commands import enqueue as enqueue_diagnostic
 from news_monitor import load_news_cache, refresh_news_cache
 from gui_widgets import InlineCalendar, ScrollableFrame, ToggleSwitch
 from resource_history import load_calendar_day as load_resource_calendar_day, memory_values, operational_date
 from first_run_setup import configured_maa_labels, run_first_setup
+from project_paths import config_path, installation_root, version_path
 
 
 APP_DIR = Path(__file__).resolve().parent
-BASE_DIR = APP_DIR.parent
-VERSION_PATH = BASE_DIR / "VERSION"
+BASE_DIR = installation_root(__file__)
+VERSION_PATH = version_path(BASE_DIR)
 APP_VERSION = VERSION_PATH.read_text(encoding="utf-8").strip()
 AUTHOR_NAME = "Taylor Yu"
 AUTHOR_URL = "https://github.com/darkbrommd"
-CONFIG_PATH = BASE_DIR / "config.json"
+CONFIG_PATH = config_path(BASE_DIR)
 LOG_DIR = BASE_DIR / "logs"
 STATE_DIR = BASE_DIR / "state"
 ASSET_DIR = BASE_DIR / "assets"
@@ -139,8 +140,12 @@ def set_windows_app_identity() -> None:
 def create_windows_shortcut(path: Path, *, startup: bool = False) -> None:
     """Create a .lnk through Windows' built-in WScript.Shell COM object."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    target = _pythonw()
-    arguments = f'"{APP_DIR / "maa_agent_gui.py"}"' + (" --startup" if startup else "")
+    if getattr(sys, "frozen", False):
+        target = Path(sys.executable)
+        arguments = "--startup" if startup else ""
+    else:
+        target = _pythonw()
+        arguments = f'"{APP_DIR / "maa_agent_gui.py"}"' + (" --startup" if startup else "")
     def ps(value: str) -> str:
         return value.replace("'", "''")
     script = (
@@ -478,8 +483,10 @@ def start_agent_process() -> tuple[bool, str]:
     if others:
         return False, f"检测到另一份 Agent：{others[0]['script']}（PID {others[0]['pid']}）。"
     try:
+        entry = agent_entry_path(BASE_DIR)
+        command = [str(entry), PACKAGED_AGENT_FLAG] if entry.suffix.lower() == ".exe" else [str(_agent_python()), str(entry)]
         subprocess.Popen(
-            [str(_agent_python()), str(agent_script_path(BASE_DIR))],
+            command,
             cwd=str(BASE_DIR),
             creationflags=NO_WINDOW | NEW_GROUP,
             close_fds=True,
@@ -2307,7 +2314,7 @@ class ManagerApp:
         self.root.mainloop()
 
 
-if __name__ == "__main__":
+def main() -> None:
     gui_mutex = AgentMutex(r"Local\MAA-Agent-Manager-8E79F134")
     if gui_mutex.acquire():
         try:
@@ -2319,3 +2326,7 @@ if __name__ == "__main__":
     else:
         STATE_DIR.mkdir(parents=True,exist_ok=True)
         SHOW_REQUEST_FILE.write_text(datetime.now().isoformat(timespec="seconds"),encoding="utf-8")
+
+
+if __name__ == "__main__":
+    main()

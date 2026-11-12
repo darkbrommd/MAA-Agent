@@ -1,4 +1,5 @@
 @echo off
+@rem Source/diagnostic backup launcher. Packaged users should prefer MAA-Agent.exe.
 setlocal
 chcp 65001 >nul
 cd /d "%~dp0"

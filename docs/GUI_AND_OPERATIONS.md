@@ -2,7 +2,7 @@
 
 ## 日常入口
 
-双击 `MAA-Agent-GUI.bat` 打开统一管理器。它包含：
+双击 `MAA-Agent.exe` 打开统一管理器；`MAA-Agent-GUI.bat` 是源码备用入口。管理器包含：
 
 - **运行状态**：Agent PID/运行时长、已配置的 MAA、MuMu、CPU、内存、磁盘、未来计划和最近日志；
 - **计划与本次例外**：查看未来 7 天计划，并对某一次计划执行“跳过 / 改时 / 撤销”；
@@ -29,9 +29,9 @@
 
 当前版本使用 Windows 命名互斥锁防止同时启动两个新版实例。为了兼容旧版，它还会检查其他 `MAA-Agent*` 目录，但只把以下进程视为 Agent：
 
-1. 进程本身必须是 `python.exe` / `pythonw.exe`；
-2. Python 实际执行的第一个脚本必须精确为 `agent.py`；
-3. 脚本父目录名必须以 `MAA-Agent` 开头。
+1. 打包版必须是带 `--maa-agent-background` 参数的 `MAA-Agent.exe`；
+2. 源码版必须是 `python.exe` / `pythonw.exe`，且实际执行的第一个脚本精确为 `agent.py`；
+3. 程序所在目录名必须以 `MAA-Agent` 开头。
 
 VS Code 打开 `agent.py`、PowerShell 搜索代码、日志里出现路径，都不会再被误判为正在运行的 Agent。
 
@@ -47,7 +47,7 @@ MAA1/MAA2 的长期真实执行时间仍在 MAA 的“设置 → 定时执行”
 
 ## 推荐日常操作
 
-1. 平时只打开 `MAA-Agent-GUI.bat` 查看状态；
+1. 平时只打开 `MAA-Agent.exe` 查看状态；
 2. 需要重启监控时使用 GUI 的“重启 Agent”；
 3. 需要临时取消一次漏跑判断时，在“计划与本次例外”操作；
 4. 修改配置后观察底部状态提示确认保存；`config.json.bak` 会保留上一次配置；

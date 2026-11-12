@@ -1,7 +1,9 @@
 # Machine-local runtime and secrets
 config.json
 config.json.bak
-AGENTS.local.md
+config/config.json
+config/config.json.bak
+docs/internal/AGENTS.local.md
 .venv/
 __pycache__/
 *.py[cod]
@@ -12,6 +14,7 @@ logs/
 backups/
 disabled_alerts/
 MANIFEST.sha256
+dist/MANIFEST.sha256
 dist/
 *.tmp
 

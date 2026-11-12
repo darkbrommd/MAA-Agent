@@ -17,6 +17,7 @@ import news_monitor
 import resource_history
 import maa_agent_gui
 import first_run_setup
+import project_paths
 
 
 class NewsMonitorTests(unittest.TestCase):
@@ -57,8 +58,19 @@ class NewsMonitorTests(unittest.TestCase):
 
 
 class GuiFormattingTests(unittest.TestCase):
+    def test_new_config_layout_prefers_config_directory_and_keeps_legacy_compatible(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            legacy = root / "config.json"
+            preferred = root / "config" / "config.json"
+            legacy.write_text("{}", encoding="utf-8")
+            self.assertEqual(project_paths.config_path(root), legacy)
+            preferred.parent.mkdir()
+            preferred.write_text("{}", encoding="utf-8")
+            self.assertEqual(project_paths.config_path(root), preferred)
+
     def test_public_release_metadata_and_portable_copilot_scripts(self):
-        version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+        version = (ROOT / "metadata" / "VERSION").read_text(encoding="utf-8").strip()
         self.assertRegex(version, r"^\d+\.\d+\.\d+$")
         self.assertEqual(maa_agent_gui.APP_VERSION, version)
         self.assertEqual(maa_agent_gui.AUTHOR_NAME, "Taylor Yu")
@@ -67,7 +79,7 @@ class GuiFormattingTests(unittest.TestCase):
         self.assertEqual(agent.BASE_DIR, ROOT)
         self.assertEqual(agent.agent_process_info.__module__, "agent_runtime")
         self.assertTrue((APP_DIR / "agent.py").is_file())
-        requirements = (ROOT / "requirements-gui.txt").read_text(encoding="utf-8").lower()
+        requirements = (ROOT / "requirements" / "gui.txt").read_text(encoding="utf-8").lower()
         for package in ("psutil", "requests", "pywin32", "openai", "pystray", "pillow"):
             self.assertIn(package, requirements)
         for name in (
@@ -108,6 +120,21 @@ class GuiFormattingTests(unittest.TestCase):
         self.assertTrue(popen.call_args.kwargs["creationflags"] & maa_agent_gui.NO_WINDOW)
         self.assertFalse(popen.call_args.kwargs["creationflags"] & maa_agent_gui.DETACHED)
 
+    def test_packaged_manager_reuses_executable_for_background_agent(self):
+        with tempfile.TemporaryDirectory(prefix="MAA-Agent-test-") as td:
+            base = Path(td)
+            executable = base / "MAA-Agent.exe"
+            executable.touch()
+            with patch.object(maa_agent_gui, "BASE_DIR", base), \
+                 patch.object(maa_agent_gui, "validated_agent_for_dir", return_value=None), \
+                 patch.object(maa_agent_gui, "find_running_agents", return_value=[]), \
+                 patch.object(maa_agent_gui.subprocess, "Popen") as popen:
+                ok, _message = maa_agent_gui.start_agent_process()
+        self.assertTrue(ok)
+        command = popen.call_args.args[0]
+        self.assertEqual(Path(command[0]).resolve(), executable.resolve())
+        self.assertEqual(command[1:], ["--maa-agent-background"])
+
     def test_dashboard_log_cutoff_does_not_change_source_text(self):
         text = "[2026-09-22 00:10:00] old\n[2026-09-22 00:11:00] new"
         filtered = maa_agent_gui.log_text_after(text, datetime(2026, 9, 22, 0, 10, 30))
@@ -115,7 +142,7 @@ class GuiFormattingTests(unittest.TestCase):
         self.assertIn("old", text)
 
     def test_first_run_defaults_to_one_maa_and_optional_bark(self):
-        template = json.loads((ROOT / "config.example.json").read_text(encoding="utf-8"))
+        template = json.loads((ROOT / "config" / "config.example.json").read_text(encoding="utf-8"))
         with tempfile.TemporaryDirectory() as td:
             maa = Path(td) / "MAA"
             maa.mkdir()
@@ -135,7 +162,7 @@ class GuiFormattingTests(unittest.TestCase):
         self.assertTrue(config["setup_completed"])
 
     def test_first_run_can_configure_two_maa_and_bark(self):
-        template = json.loads((ROOT / "config.example.json").read_text(encoding="utf-8"))
+        template = json.loads((ROOT / "config" / "config.example.json").read_text(encoding="utf-8"))
         with tempfile.TemporaryDirectory() as td:
             first = Path(td) / "one"; second = Path(td) / "two"
             first.mkdir(); second.mkdir()

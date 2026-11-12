@@ -22,6 +22,7 @@ from schedule_utils import effective_occurrences, load_overrides, occurrence_key
 from diagnostic_commands import consume as consume_diagnostic_commands, save_result as save_diagnostic_result
 from news_monitor import poll as poll_news
 from resource_history import sample as sample_resource_history
+from project_paths import config_path, current_entry_path, installation_root
 
 import psutil
 import requests
@@ -39,7 +40,8 @@ except Exception:
     OpenAI = None
 
 
-BASE_DIR = Path(__file__).resolve().parents[1]
+BASE_DIR = installation_root(__file__)
+SELF_ENTRY = current_entry_path(__file__)
 LOG_DIR = BASE_DIR / "logs"
 ARCHIVE_DIR = LOG_DIR / "archive"
 STATE_DIR = BASE_DIR / "state"
@@ -50,7 +52,7 @@ ARCHIVE_DIR.mkdir(exist_ok=True)
 STATE_DIR.mkdir(exist_ok=True)
 DISABLED_DIR.mkdir(exist_ok=True)
 
-CONFIG_PATH = BASE_DIR / "config.json"
+CONFIG_PATH = config_path(BASE_DIR)
 PID_FILE = STATE_DIR / "agent.pid"
 STOP_FILE = STATE_DIR / "stop.request"
 BARK_QUEUE_FILE = STATE_DIR / "bark_queue.jsonl"
@@ -1027,7 +1029,7 @@ def _agent_script_from_cmdline(cmdline, cwd=None):
 
 
 def pid_is_our_agent(pid):
-    return agent_process_info(pid, Path(__file__).resolve()) is not None
+    return agent_process_info(pid, SELF_ENTRY) is not None
 
 
 def find_other_maa_agent_process():
@@ -1065,7 +1067,7 @@ def another_agent_is_running():
 
 
 def write_pid():
-    write_runtime_record(BASE_DIR)
+    write_runtime_record(BASE_DIR, entry_path=SELF_ENTRY)
 
 
 def remove_pid():

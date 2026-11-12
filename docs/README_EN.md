@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/app_icon.png" width="128" alt="MAA Agent icon">
+  <img src="../assets/app_icon.png" width="128" alt="MAA Agent icon">
   <h1>MAA Agent</h1>
   <p>A Windows desktop companion that monitors MAA, explains what needs attention, and sends a daily summary to your phone</p>
 
@@ -7,7 +7,7 @@
   [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat-square&logo=windows)](https://github.com/darkbrommd/MAA-Agent/releases/latest)
   [![Tests](https://img.shields.io/badge/tests-passing-2ea44f?style=flat-square)](#development-and-tests)
 
-  [Download](https://github.com/darkbrommd/MAA-Agent/releases/latest) · [MAA website](https://maa.plus/) · [MAA installation guide](https://docs.maa.plus/en-us/manual/install.html) · [简体中文](README.md)
+  [Download](https://github.com/darkbrommd/MAA-Agent/releases/latest) · [MAA website](https://maa.plus/) · [MAA installation guide](https://docs.maa.plus/en-us/manual/install.html) · [简体中文](../README.md)
 </div>
 
 ---
@@ -33,24 +33,24 @@ It manages **one MAA installation by default**. For most users, setup is just ch
 
 1. **Set up MAA first.** [Install MAA](https://docs.maa.plus/en-us/manual/install.html), finish its basic configuration, and run one task manually to make sure it works.
 2. **Download MAA Agent.** Get the latest ZIP from [Releases](https://github.com/darkbrommd/MAA-Agent/releases/latest) and fully extract it to a permanent folder such as `D:\MAA-Agent`.
-3. **Double-click `MAA-Agent-GUI.bat`.** On the first run it creates the Python environment, installs dependencies, and opens the setup wizard.
+3. **Double-click `MAA-Agent.exe`.** Python is not required; the first run opens the setup wizard directly.
 4. **Follow the wizard.** Choose one or two MAA installations and select each MAA folder. Add a Bark key for phone reminders, or skip it.
 
-After setup, the main window opens. Use `MAA-Agent-GUI.bat` again later, or create desktop and Windows startup shortcuts in Settings.
+After setup, use `MAA-Agent.exe` again later, or create desktop and Windows startup shortcuts in Settings. The same executable also runs the background Agent.
 
-### Automatic setup did not finish?
+### Source/BAT fallback
 
-Automatic setup requires Windows 10/11 and Python 3.11 or newer. If Python is missing, install it from [python.org](https://www.python.org/downloads/windows/), enable **Add Python to PATH**, and open `MAA-Agent-GUI.bat` again.
+If the EXE cannot be used, or you need source-level diagnostics, open `MAA-Agent-GUI.bat`. This fallback requires Windows 10/11 and Python 3.11 or newer; the BAT creates `.venv` and installs dependencies automatically.
 
 The manual setup path remains available:
 
 ```powershell
 py -3.11 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements-gui.txt
-Copy-Item config.example.json config.json
+.\.venv\Scripts\python.exe -m pip install -r requirements\gui.txt
+Copy-Item config\config.example.json config\config.json
 ```
 
-Edit `config.json`, then reopen `MAA-Agent-GUI.bat`. Existing configurations are preserved and do not trigger the wizard again.
+Edit `config\config.json`, then reopen `MAA-Agent-GUI.bat`. A legacy root-level `config.json` remains supported and does not trigger the wizard again.
 
 ## Daily use
 
@@ -60,16 +60,16 @@ Edit `config.json`, then reopen `MAA-Agent-GUI.bat`. Existing configurations are
 - Notification tests check Bark and reminder behavior without stopping or changing MAA.
 - Closing the window can leave the Agent running in the system tray.
 
-See [`docs/GUI_AND_OPERATIONS.md`](docs/GUI_AND_OPERATIONS.md) for detailed operation and [`docs/README_DEPLOY.md`](docs/README_DEPLOY.md) for migration notes.
+See [`GUI_AND_OPERATIONS.md`](GUI_AND_OPERATIONS.md) for detailed operation and [`README_DEPLOY.md`](README_DEPLOY.md) for migration notes.
 
 ## Repository map
 
 | Path | Role |
 |---|---|
-| [`app/`](app/) | Agent, desktop UI, first-run setup, schedule, resource, and notice source code. |
+| [`app/`](../app/) | Agent, desktop UI, first-run setup, schedule, resource, and notice source code. |
 | `tools/windows/` | Windows helpers for setup, lifecycle, and testing. |
 | `tools/diagnostics/` | Manual diagnostics that call the real Bark or DeepSeek service. |
-| `config.example.json` | Single-MAA default template; copy it to `config.json` for manual setup. |
+| `config/config.example.json` | Single-MAA default template; copy it to `config/config.json` for manual setup. |
 | `tests/` | Automated regression tests. |
 
 Local `config.json`, secrets, logs, runtime state, backups, and the virtual environment are excluded from Git and release packages.
@@ -83,14 +83,14 @@ Local `config.json`, secrets, logs, runtime state, backups, and the virtual envi
 
 ## Development and tests
 
-Current stable version: **v1.1.5**. The root [`VERSION`](VERSION) file is authoritative.
+Current stable version: **v1.2.0**. [`metadata/VERSION`](../metadata/VERSION) is authoritative.
 
 ```powershell
 .\.venv\Scripts\python.exe -m compileall -q .
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-Contributors should read [`CONTRIBUTING.md`](CONTRIBUTING.md); coding agents and maintainers can also use [`AGENTS.md`](AGENTS.md). See [`SECURITY.md`](SECURITY.md) for private vulnerability reporting. `scripts\build_release.ps1` creates release packages.
+Contributors should read [`CONTRIBUTING.md`](CONTRIBUTING.md); coding agents and maintainers can also use [`AGENTS.md`](../AGENTS.md). See [`SECURITY.md`](SECURITY.md) for private vulnerability reporting. `scripts\build_release.ps1` creates release packages.
 
 ## Author and acknowledgement
 

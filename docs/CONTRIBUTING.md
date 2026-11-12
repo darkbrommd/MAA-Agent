@@ -12,10 +12,10 @@
 
 ```powershell
 py -3.11 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements-gui.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements\gui.txt
 ```
 
-复制 `config.example.json` 为 `config.json` 只用于本机运行。请不要提交本机配置、密钥、日志或状态目录。
+复制 `config\config.example.json` 为 `config\config.json` 只用于本机运行。请不要提交本机配置、密钥、日志或状态目录。
 
 ## 建议流程
 
@@ -47,6 +47,6 @@ py -3.11 -m venv .venv
 
 ## 版本与发布
 
-维护者以根目录 `VERSION` 为版本来源。正式发布还需要对应 Release Notes、Git 标签、GitHub Release、ZIP 和 SHA-256；普通 Pull Request 不需要自行创建版本标签。
+维护者以 `metadata/VERSION` 为版本来源。正式发布还需要对应 Release Notes、Git 标签、GitHub Release、ZIP 和 SHA-256；普通 Pull Request 不需要自行创建版本标签。
 
 如果发现安全问题或意外包含敏感信息，请先联系维护者，不要在公开 Issue 中粘贴密钥、真实配置或完整日志。

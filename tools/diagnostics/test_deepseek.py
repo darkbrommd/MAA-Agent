@@ -4,7 +4,9 @@ from openai import OpenAI
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-CONFIG_PATH = BASE_DIR / "config.json"
+CONFIG_PATH = BASE_DIR / "config" / "config.json"
+if not CONFIG_PATH.exists():
+    CONFIG_PATH = BASE_DIR / "config.json"
 
 
 def load_config():

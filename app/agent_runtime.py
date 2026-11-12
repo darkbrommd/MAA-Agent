@@ -27,6 +27,8 @@ import psutil
 MUTEX_NAME = r"Local\MAA-Agent-Watchdog-7D3A2D45"
 ERROR_ALREADY_EXISTS = 183
 PYTHON_PROCESS_PREFIXES = ("python", "pythonw")
+PACKAGED_EXE_NAME = "MAA-Agent.exe"
+PACKAGED_AGENT_FLAG = "--maa-agent-background"
 
 
 def agent_script_path(base_dir: Path | str) -> Path:
@@ -42,13 +44,28 @@ def agent_script_candidates(base_dir: Path | str) -> tuple[Path, Path]:
     return base / "app" / "agent.py", base / "agent.py"
 
 
+def agent_entry_candidates(base_dir: Path | str) -> tuple[Path, ...]:
+    base = Path(base_dir).resolve()
+    return (base / PACKAGED_EXE_NAME, *agent_script_candidates(base))
+
+
+def agent_entry_path(base_dir: Path | str) -> Path:
+    """Prefer the packaged executable and fall back to the Python source entry."""
+    for candidate in agent_entry_candidates(base_dir):
+        if candidate.is_file():
+            return candidate
+    return agent_script_path(base_dir)
+
+
 def is_script_for_installation(script: Path | str, base_dir: Path | str) -> bool:
     """Whether an Agent script belongs to this installation, including legacy layout."""
-    return any(_same_path(script, candidate) for candidate in agent_script_candidates(base_dir))
+    return any(_same_path(script, candidate) for candidate in agent_entry_candidates(base_dir))
 
 
 def installation_dir_for_script(script: Path | str) -> Path:
     path = Path(script).resolve()
+    if path.suffix.lower() == ".exe":
+        return path.parent
     return path.parent.parent if path.parent.name.lower() == "app" else path.parent
 
 
@@ -103,13 +120,20 @@ def script_from_cmdline(
 def process_agent_info(proc: psutil.Process) -> dict | None:
     try:
         name = proc.name()
-        if not _is_python_process_name(name):
-            return None
-        try:
-            cwd = proc.cwd()
-        except psutil.Error:
-            cwd = None
-        script = script_from_cmdline(proc.cmdline(), cwd, name)
+        cmdline = [str(value) for value in proc.cmdline()]
+        if _is_python_process_name(name):
+            try:
+                cwd = proc.cwd()
+            except psutil.Error:
+                cwd = None
+            script = script_from_cmdline(cmdline, cwd, name)
+        else:
+            if Path(name).name.lower() != PACKAGED_EXE_NAME.lower() or PACKAGED_AGENT_FLAG not in cmdline[1:]:
+                return None
+            try:
+                script = Path(proc.exe()).resolve()
+            except (psutil.Error, OSError):
+                script = Path(cmdline[0]).resolve() if cmdline else None
         if script is None:
             return None
         try:
@@ -222,7 +246,7 @@ def stop_file(base_dir: Path | str) -> Path:
     return Path(base_dir) / "state" / "stop.request"
 
 
-def write_runtime_record(base_dir: Path | str, pid: int | None = None) -> dict:
+def write_runtime_record(base_dir: Path | str, pid: int | None = None, entry_path: Path | str | None = None) -> dict:
     base = Path(base_dir).resolve()
     state = base / "state"
     state.mkdir(parents=True, exist_ok=True)
@@ -231,7 +255,7 @@ def write_runtime_record(base_dir: Path | str, pid: int | None = None) -> dict:
     record = {
         "pid": pid,
         "create_time": proc.create_time(),
-        "script": str(agent_script_path(base)),
+        "script": str(Path(entry_path).resolve() if entry_path else agent_entry_path(base)),
         "started_at": datetime.now().astimezone().isoformat(timespec="seconds"),
     }
     tmp = runtime_file(base).with_suffix(".json.tmp")

@@ -1,6 +1,6 @@
 """First-run configuration for MAA Agent.
 
-The wizard writes only ``config.json`` in the application directory.  Existing
+The wizard writes only ``config/config.json`` in the application directory. Existing
 advanced settings are preserved when the helper is reused with a base config.
 """
 
@@ -14,6 +14,8 @@ import webbrowser
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+
+from project_paths import config_path, config_template_path
 
 
 MAA_INSTALL_URL = "https://docs.maa.plus/zh-cn/manual/install.html"
@@ -82,8 +84,8 @@ def save_config(path: Path, config: dict) -> None:
 class FirstRunWizard:
     def __init__(self, base_dir: Path):
         self.base_dir = Path(base_dir)
-        self.template_path = self.base_dir / "config.example.json"
-        self.config_path = self.base_dir / "config.json"
+        self.template_path = config_template_path(self.base_dir)
+        self.config_path = config_path(self.base_dir)
         self.completed = False
         self.root = tk.Tk()
         self.root.title("欢迎使用 MAA Agent")

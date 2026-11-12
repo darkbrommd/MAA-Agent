@@ -11,9 +11,10 @@ from schedule_utils import (
     load_overrides,
     remove_override,
 )
+from project_paths import config_path
 
 BASE_DIR = Path(__file__).resolve().parents[1]
-CONFIG_PATH = BASE_DIR / "config.json"
+CONFIG_PATH = config_path(BASE_DIR)
 
 
 def load_config():
