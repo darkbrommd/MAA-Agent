@@ -17,14 +17,18 @@ def load_config():
 def main():
     cfg = load_config()
 
-    api_key = cfg.get("deepseek_api_key", "").strip()
+    api_key = str(cfg.get("ai_api_key", cfg.get("deepseek_api_key", ""))).strip()
+    model = str(cfg.get("ai_model", cfg.get("deepseek_model", ""))).strip()
+    base_url = str(cfg.get("ai_base_url", cfg.get("deepseek_base_url", "https://api.deepseek.com"))).strip()
     if not api_key:
-        raise RuntimeError("config.json 里 deepseek_api_key 还是空的，请先填入 DeepSeek API Key。")
+        raise RuntimeError("config.json 里的 ai_api_key 还是空的，请先填写 AI API Key。")
+    if not model:
+        raise RuntimeError("config.json 里的 ai_model 还是空的，请先填写模型名称。")
 
-    client = OpenAI(
-        api_key=api_key,
-        base_url="https://api.deepseek.com"
-    )
+    client_args = {"api_key": api_key}
+    if base_url:
+        client_args["base_url"] = base_url
+    client = OpenAI(**client_args)
 
     # 这是一段假的 MAA 异常日志，用来测试模型是否能按格式归类。
     fake_log = """
@@ -67,21 +71,18 @@ JSON 格式必须是：
 """
 
     response = client.chat.completions.create(
-        model=cfg.get("deepseek_model", "deepseek-v4-flash"),
+        model=model,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ],
         temperature=0,
         max_tokens=180,
-        extra_body={
-            "thinking": {"type": "disabled"}
-        }
     )
 
     content = response.choices[0].message.content.strip()
 
-    print("===== DeepSeek 原始返回 =====")
+    print("===== AI 原始返回 =====")
     print(content)
 
     print("\n===== 尝试解析 JSON =====")

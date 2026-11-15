@@ -75,7 +75,7 @@ tools\windows\test_all_notifications.bat
 
 后者会连续发送多条明确标注为测试的通知，但不会制造真实故障。运行前确认 `config.json` 中的 Bark 设置属于当前测试设备。
 
-`tools/diagnostics/test_bark.py` 也会真实发送通知；`tools/diagnostics/test_deepseek.py` 会访问并消耗外部 API。两者都不属于普通回归测试。
+`tools/diagnostics/test_bark.py` 也会真实发送通知；`tools/diagnostics/test_ai.py` 会访问并消耗外部 AI API。两者都不属于普通回归测试。
 
 ## 6. 低风险现场检查
 

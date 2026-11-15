@@ -102,6 +102,29 @@ def load_config():
 cfg = load_config()
 
 
+AI_CONFIG_KEYS = {
+    "enabled": ("use_ai", "use_deepseek", False),
+    "api_key": ("ai_api_key", "deepseek_api_key", ""),
+    "base_url": ("ai_base_url", "deepseek_base_url", "https://api.deepseek.com"),
+    "model": ("ai_model", "deepseek_model", ""),
+    "daily_report": ("ai_daily_report", "deepseek_daily_report", True),
+    "daily_when_useful_only": ("ai_daily_when_useful_only", "deepseek_daily_when_useful_only", True),
+    "max_calls_per_day": ("ai_max_calls_per_day", "deepseek_max_calls_per_day", 1),
+    "resource_pressure_minutes": ("ai_resource_pressure_minutes", "deepseek_resource_pressure_minutes", 30),
+    "cpu_high_minutes": ("ai_cpu_high_minutes", "deepseek_cpu_high_minutes", 60),
+    "daily_input_max_bytes": ("ai_daily_input_max_bytes", "deepseek_daily_input_max_bytes", 9000),
+    "daily_output_max_bytes": ("ai_daily_output_max_bytes", "deepseek_daily_output_max_bytes", 1800),
+}
+
+
+def ai_config(name):
+    """Read a generic AI option, with legacy provider-specific keys as fallback."""
+    current, legacy, default = AI_CONFIG_KEYS[name]
+    if current in cfg:
+        return cfg.get(current)
+    return cfg.get(legacy, default)
+
+
 def log(msg):
     line = f"[{now_str()}] {msg}"
     print(line)
@@ -569,7 +592,7 @@ def daily_stats_path():
 def default_daily_stats():
     return {
         "date": today_str(), "started_at": now_str(),
-        "bark_sent": 0, "bark_failed": 0, "bark_queued": 0, "deepseek_calls": 0,
+        "bark_sent": 0, "bark_failed": 0, "bark_queued": 0, "ai_calls": 0,
         "alerts": [], "events": [], "special_notices": [], "hard_errors": [],
         "incidents": [], "recoverable_issues": [], "taskchains": {},
         "observed_runs": {"MAA1": [], "MAA2": []},
@@ -1888,7 +1911,7 @@ def evaluate_pending_issues(label):
         add_incident(category,rec.get("happened"),label=label,task=task,likely=rec.get("likely"),action=rec.get("action"),key=f"maa_issue|{label}|{sig}")
         add_daily_alert(f"{label}：{rec.get('title')}（{task}）",severity="warning",label=label)
         bark(f"{label}：{rec.get('title')}",body,level="timeSensitive",alert_name=f"maa_issue_{label}_{category}")
-        decision_log({"label":label,"decision":"alert_task_failed" if category=="task_failed" else "alert_pending_stall","reason":category,"taskchain":chain,"age_minutes":round(age,1),"count":rec.get("count"),"deepseek":False})
+        decision_log({"label":label,"decision":"alert_task_failed" if category=="task_failed" else "alert_pending_stall","reason":category,"taskchain":chain,"age_minutes":round(age,1),"count":rec.get("count"),"ai":False})
     if changed: save_pending_issues(label,data)
 
 
@@ -1967,7 +1990,7 @@ def process_log_text(label,path,text,backfill_only=False):
         mode=d.get("mode")
         if mode=="suppress":
             add_recoverable_issue(d["category"],d["happened"],label=label,task=d.get("task"))
-            decision_log({"label":label,"path":str(path),"decision":"suppress","reason":d["category"],"taskchain":chain,"callback":cb,"deepseek":False})
+            decision_log({"label":label,"path":str(path),"decision":"suppress","reason":d["category"],"taskchain":chain,"callback":cb,"ai":False})
             continue
         if mode=="immediate":
             body=f"发生了什么：{d['happened']}\n大概率原因：{d['likely']}\n你要做什么：{d['action']}\n时间：{event_dt:%Y-%m-%d %H:%M:%S}"
@@ -1975,10 +1998,10 @@ def process_log_text(label,path,text,backfill_only=False):
             add_incident(d["category"],d["happened"],label=label,task=d.get("task"),likely=d.get("likely"),action=d.get("action"),key=key)
             add_daily_alert(f"{label}：{d['title']}（{d.get('task')}）",severity="warning",label=label)
             bark(f"{label}：{d['title']}",body,level="timeSensitive",alert_name=f"maa_issue_{label}_{d['category']}")
-            decision_log({"label":label,"path":str(path),"decision":"alert_immediate","reason":d["category"],"taskchain":chain,"callback":cb,"deepseek":False})
+            decision_log({"label":label,"path":str(path),"decision":"alert_immediate","reason":d["category"],"taskchain":chain,"callback":cb,"ai":False})
             continue
         rec=queue_pending_issue(label,d,chain,event_dt,record.get("payload"))
-        decision_log({"label":label,"path":str(path),"decision":"defer","reason":d["category"],"taskchain":chain,"callback":cb,"repeat_count":rec.get("count"),"deepseek":False})
+        decision_log({"label":label,"path":str(path),"decision":"defer","reason":d["category"],"taskchain":chain,"callback":cb,"repeat_count":rec.get("count"),"ai":False})
         # Do not wait until the end of the current read batch: a later success
         # from another task must never erase this explicit failure before Bark
         # has had a chance to send/queue it.
@@ -2228,12 +2251,15 @@ def check_uptime_reminder():
     hours=agent_uptime_hours(); threshold=float(cfg.get("uptime_reminder_hours",168))
     if hours >= threshold: add_daily_event("uptime",f"Agent 已连续运行 {hours:.1f} 小时。",severity="info")
 
-def deepseek_usage_path():
-    return STATE_DIR / f"deepseek_usage_{today_str()}.txt"
+def ai_usage_path():
+    return STATE_DIR / f"ai_usage_{today_str()}.txt"
 
 
-def get_deepseek_usage_count():
-    path = deepseek_usage_path()
+def get_ai_usage_count():
+    path = ai_usage_path()
+    legacy_path = STATE_DIR / f"deepseek_usage_{today_str()}.txt"
+    if not path.exists() and legacy_path.exists():
+        path = legacy_path
     if not path.exists():
         return 0
 
@@ -2243,12 +2269,12 @@ def get_deepseek_usage_count():
         return 0
 
 
-def increment_deepseek_usage_count():
-    count = get_deepseek_usage_count() + 1
-    deepseek_usage_path().write_text(str(count), encoding="utf-8")
+def increment_ai_usage_count():
+    count = get_ai_usage_count() + 1
+    ai_usage_path().write_text(str(count), encoding="utf-8")
 
     data = load_daily_stats()
-    data["deepseek_calls"] = count
+    data["ai_calls"] = count
     save_daily_stats(data)
 
 
@@ -2424,32 +2450,33 @@ def compact_daily_report_for_bark(local_report=None, ai_report=None):
     return "\n".join(lines)
 
 
-def deepseek_daily_worth_calling(data=None):
+def ai_daily_worth_calling(data=None):
     data=data or load_daily_stats()
     if open_incidents(data): return True
     mem=data.get("memory",{}); cpu=data.get("cpu",{})
-    if float(mem.get("pressure_minutes",0) or 0)>=float(cfg.get("deepseek_resource_pressure_minutes",30)): return True
-    if float(cpu.get("high_minutes",0) or 0)>=float(cfg.get("deepseek_cpu_high_minutes",60)): return True
+    if float(mem.get("pressure_minutes",0) or 0)>=float(ai_config("resource_pressure_minutes")): return True
+    if float(cpu.get("high_minutes",0) or 0)>=float(ai_config("cpu_high_minutes")): return True
     return False
 
 
-def deepseek_daily_report(local_report):
-    if not cfg.get("use_deepseek",False) or not cfg.get("deepseek_daily_report",True) or daily_report_is_skipped_today(): return None
-    if cfg.get("deepseek_daily_when_useful_only",True) and not deepseek_daily_worth_calling():
-        add_daily_event("deepseek","今天没有需要 AI 二次判断的异常，未调用 DeepSeek。",severity="info")
+def ai_daily_report(local_report):
+    if not ai_config("enabled") or not ai_config("daily_report") or daily_report_is_skipped_today(): return None
+    if ai_config("daily_when_useful_only") and not ai_daily_worth_calling():
+        add_daily_event("ai","今天没有需要 AI 二次判断的异常，未调用 AI。",severity="info")
         return None
-    if get_deepseek_usage_count() >= int(cfg.get("deepseek_max_calls_per_day",1)): return None
-    api_key=cfg.get("deepseek_api_key","").strip()
-    if not api_key or api_key=="这里填你的DeepSeek API Key" or OpenAI is None: return None
+    if get_ai_usage_count() >= int(ai_config("max_calls_per_day")): return None
+    api_key=str(ai_config("api_key") or "").strip(); model=str(ai_config("model") or "").strip()
+    if not api_key or not model or OpenAI is None: return None
     try:
-        client=OpenAI(api_key=api_key,base_url="https://api.deepseek.com"); report=trim_utf8_bytes(local_report,int(cfg.get("deepseek_daily_input_max_bytes",9000)))
+        base_url=str(ai_config("base_url") or "").strip(); client_args={"api_key":api_key}
+        if base_url: client_args["base_url"]=base_url
+        client=OpenAI(**client_args); report=trim_utf8_bytes(local_report,int(ai_config("daily_input_max_bytes")))
         prompt=f"""你负责一台 Windows 挂机备用机的每日运维摘要。只在已有本地规则发现值得判断的异常时提供二次分析。\n\n只输出4行中文纯文本，每行以【结论】【资源趋势】【运行质量】【建议】开头，总计不超过420汉字。不要复述一次性 SubTaskError、已恢复错误、内部回调名或日志路径。计划任务的‘无法核验’表示当时缺少可靠监控证据，不能判为漏跑。证据不足不要编原因；没有动作就写无需处理。\n\n本地统计：\n{report}"""
-        kwargs=dict(model=cfg.get("deepseek_model","deepseek-v4-flash"),messages=[{"role":"system","content":"只分析真正需要人决策的挂机机异常，不制造建议。"},{"role":"user","content":prompt}],max_tokens=420,temperature=0)
-        try: resp=client.chat.completions.create(**kwargs,extra_body={"thinking":{"type":"disabled"}})
-        except Exception: resp=client.chat.completions.create(**kwargs)
-        increment_deepseek_usage_count(); return trim_utf8_bytes(resp.choices[0].message.content.strip(),int(cfg.get("deepseek_daily_output_max_bytes",1800)))
+        kwargs=dict(model=model,messages=[{"role":"system","content":"只分析真正需要人决策的挂机机异常，不制造建议。"},{"role":"user","content":prompt}],max_tokens=420,temperature=0)
+        resp=client.chat.completions.create(**kwargs)
+        increment_ai_usage_count(); return trim_utf8_bytes(resp.choices[0].message.content.strip(),int(ai_config("daily_output_max_bytes")))
     except Exception as e:
-        log(f"DeepSeek daily report failed: {e}"); add_daily_event("deepseek",f"DeepSeek 日报失败：{e}",severity="warning"); return None
+        log(f"AI daily report failed: {e}"); add_daily_event("ai",f"AI 日报分析失败：{e}",severity="warning"); return None
 
 
 def daily_report():
@@ -2459,12 +2486,12 @@ def daily_report():
     # Force one schedule evaluation just before the report so the schedule-source
     # metadata and any due misses are current.
     check_scheduled_runs()
-    local_report=local_daily_report_text(); ai_report=deepseek_daily_report(local_report); body=compact_daily_report_for_bark(local_report,ai_report)
+    local_report=local_daily_report_text(); ai_report=ai_daily_report(local_report); body=compact_daily_report_for_bark(local_report,ai_report)
     data=load_daily_stats(); incidents=open_incidents(data)
     title="MAA 日报｜需要看一下" if incidents else "MAA 日报｜今天正常"
     bark_force(title,body,level="passive")
     # bark_force queues transient failures, so one report attempt per calendar day
-    # is enough; otherwise a restart could duplicate both Bark and DeepSeek calls.
+    # is enough; otherwise a restart could duplicate both Bark and AI calls.
     mark_daily_report_sent_today()
     return True
 

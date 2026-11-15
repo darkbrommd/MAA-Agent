@@ -8,7 +8,7 @@ import unittest
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = ROOT / "app"
@@ -526,12 +526,52 @@ class AgentLogicTests(unittest.TestCase):
             agent.initialize_log_offsets_on_start()
             self.assertEqual(agent.read_new_log_text(source),"new while agent stopped\n")
 
-    def test_deepseek_only_when_useful(self):
-        with isolated_agent():
+    def test_ai_only_when_useful(self):
+        with isolated_agent({"ai_resource_pressure_minutes":30}):
             data = agent.load_daily_stats()
-            self.assertFalse(agent.deepseek_daily_worth_calling(data))
+            self.assertFalse(agent.ai_daily_worth_calling(data))
             data["memory"]["pressure_minutes"] = 31
-            self.assertTrue(agent.deepseek_daily_worth_calling(data))
+            self.assertTrue(agent.ai_daily_worth_calling(data))
+
+    def test_ai_report_uses_configured_openai_compatible_endpoint(self):
+        config = {
+            "use_ai": True,
+            "ai_daily_report": True,
+            "ai_daily_when_useful_only": False,
+            "ai_api_key": "secret",
+            "ai_base_url": "https://ai.example/v1",
+            "ai_model": "example-model",
+        }
+        with isolated_agent(config):
+            client = MagicMock()
+            client.chat.completions.create.return_value.choices = [
+                MagicMock(message=MagicMock(content="【结论】正常"))
+            ]
+            with patch.object(agent,"OpenAI",return_value=client) as openai:
+                result = agent.ai_daily_report("本地日报")
+            openai.assert_called_once_with(api_key="secret",base_url="https://ai.example/v1")
+            kwargs = client.chat.completions.create.call_args.kwargs
+            self.assertEqual(kwargs["model"],"example-model")
+            self.assertNotIn("extra_body",kwargs)
+            self.assertEqual(result,"【结论】正常")
+
+    def test_legacy_ai_provider_config_remains_supported(self):
+        with isolated_agent() as _base:
+            for key in list(agent.cfg):
+                if key == "use_ai" or key.startswith("ai_"):
+                    agent.cfg.pop(key)
+            agent.cfg.update({
+                "use_deepseek": True,
+                "deepseek_api_key": "legacy-secret",
+                "deepseek_model": "legacy-model",
+                "deepseek_daily_when_useful_only": False,
+            })
+            client = MagicMock()
+            client.chat.completions.create.return_value.choices = [MagicMock(message=MagicMock(content="兼容成功"))]
+            with patch.object(agent,"OpenAI",return_value=client) as openai:
+                result = agent.ai_daily_report("本地日报")
+            openai.assert_called_once_with(api_key="legacy-secret",base_url="https://api.deepseek.com")
+            self.assertEqual(result,"兼容成功")
 
 
 
@@ -652,10 +692,10 @@ class AgentLogicTests(unittest.TestCase):
 
 
     def test_daily_report_render_and_send_smoke(self):
-        with isolated_agent({"enable_daily_report":True,"deepseek_daily_report":False,"enable_scheduled_run_check":False}):
+        with isolated_agent({"enable_daily_report":True,"ai_daily_report":False,"enable_scheduled_run_check":False}):
             calls=[]
             with patch.object(agent,"bark_force",side_effect=lambda *a,**k:calls.append((a,k))), \
-                 patch.object(agent,"deepseek_daily_report",return_value=None):
+                 patch.object(agent,"ai_daily_report",return_value=None):
                 text=agent.local_daily_report_text()
                 compact=agent.compact_daily_report_for_bark(text,None)
                 sent=agent.daily_report()
@@ -793,7 +833,7 @@ class AgentLogicTests(unittest.TestCase):
              patch.object(agent,"windows_system_http_proxy",return_value="http://127.0.0.1:7890"):
             text=agent.startup_status_text()
         self.assertIn("初始状态",text)
-        for forbidden in ("宽限","10 分钟","DeepSeek：","报警策略","TaskChain"):
+        for forbidden in ("宽限","10 分钟","AI 策略：","报警策略","TaskChain"):
             self.assertNotIn(forbidden,text)
 
     def test_cross_directory_agent_process_can_be_detected(self):

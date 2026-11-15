@@ -35,7 +35,7 @@ py -3.11 -m venv .venv
 普通回归测试不会发送 Bark。以下入口具有外部影响，请仅在确实需要时使用：
 
 - `tools/windows/test_all_notifications.bat` 和 `tools/diagnostics/test_bark.py`：发送真实 Bark 通知；
-- `tools/diagnostics/test_deepseek.py`：访问并消耗外部 API；
+- `tools/diagnostics/test_ai.py`：访问并消耗外部 AI API；
 - `tools/windows/emergency_stop_agent.bat`：停止本目录中经过身份校验的 Agent。
 
 ## 提交内容

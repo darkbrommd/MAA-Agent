@@ -12,7 +12,7 @@
 
 ---
 
-MAA Agent does more than check whether MAA runs on schedule. It brings task status, resource trends, official notices, and recent logs into one window. With DeepSeek enabled, the daily report adds a short analysis—a conclusion, resource trend, run quality, and a suggestion—when something noteworthy comes up. With Bark configured, that report goes to your phone.
+MAA Agent does more than check whether MAA runs on schedule. It brings task status, resource trends, official notices, and recent logs into one window. With an AI service connected, the daily report adds a short analysis—a conclusion, resource trend, run quality, and a suggestion—when something noteworthy comes up. With Bark configured, that report goes to your phone.
 
 It manages **one MAA installation by default**. For most users, setup is just choosing the MAA folder in the first-run wizard. A second MAA can be added during setup if needed.
 
@@ -25,7 +25,7 @@ It manages **one MAA installation by default**. For most users, setup is just ch
 | 🗓️ | Schedule | See upcoming runs and whether they are running, completed, or failed. |
 | 🔔 | Reminders | Use Bark when MAA is not running, a task is late, or system resources are low. |
 | 📊 | Resources | Review CPU, memory, disk, MAA, and MuMu history. |
-| 📝 | Daily report & AI analysis | Summarizes scheduled runs, resource trends, and open issues each day. With DeepSeek enabled, it analyzes noteworthy issues and adds a conclusion and suggested next steps; with Bark configured, the report goes to your phone. |
+| 📝 | Daily report & AI analysis | Summarizes scheduled runs, resource trends, and open issues each day. With a compatible AI service enabled, it analyzes noteworthy issues and adds a conclusion and suggested next steps; with Bark configured, the report goes to your phone. |
 | 📰 | Notices | Read new official Arknights notices and detect maintenance windows. |
 | 🧰 | Controls | Start, stop, and inspect the Agent from the desktop window or tray; one or two MAA installations are supported. |
 
@@ -56,7 +56,7 @@ Edit `config\config.json`, then reopen `MAA-Agent-GUI.bat`. A legacy root-level 
 
 - The dashboard shows MAA/MuMu status, upcoming runs, recent events, and resource trends.
 - The timeline can skip or reschedule monitoring for one run. It does not edit MAA's own timers.
-- Settings covers Windows startup, dark mode, aliases, launch paths, and Bark behavior.
+- Settings covers Windows startup, dark mode, aliases, launch paths, Bark, and the AI endpoint.
 - Notification tests check Bark and reminder behavior without stopping or changing MAA.
 - Closing the window can leave the Agent running in the system tray.
 
@@ -68,7 +68,7 @@ See [`GUI_AND_OPERATIONS.md`](GUI_AND_OPERATIONS.md) for detailed operation and 
 |---|---|
 | [`app/`](../app/) | Agent, desktop UI, first-run setup, schedule, resource, and notice source code. |
 | `tools/windows/` | Windows helpers for setup, lifecycle, and testing. |
-| `tools/diagnostics/` | Manual diagnostics that call the real Bark or DeepSeek service. |
+| `tools/diagnostics/` | Manual diagnostics that call the real Bark service or an external AI API. |
 | `config/config.example.json` | Single-MAA default template; copy it to `config/config.json` for manual setup. |
 | `tests/` | Automated regression tests. |
 
@@ -78,12 +78,12 @@ Local `config.json`, secrets, logs, runtime state, backups, and the virtual envi
 
 - **Second MAA:** choose “two” in the first-run wizard, or add MAA2 later through the full configuration editor.
 - **Bark:** optional iPhone reminders; skip it during setup and add it later if preferred.
-- **DeepSeek daily analysis:** off by default. Once enabled, the daily report asks for a short analysis only when there are unresolved incidents or memory usage or CPU load has stayed high for a while — one call per day by default.
+- **AI daily analysis:** off by default. It accepts services that expose an OpenAI-compatible Chat Completions endpoint. Enter the endpoint URL, model name, and API key in Settings; once enabled, it runs only for unresolved incidents or sustained memory/CPU pressure, with one call per day by default.
 - **External heartbeat:** covers full power or network outages that a local app cannot report; it is not configured by default.
 
 ## Development and tests
 
-Current stable version: **v1.2.1**. [`metadata/VERSION`](../metadata/VERSION) is authoritative.
+Current stable version: **v1.3.0**. [`metadata/VERSION`](../metadata/VERSION) is authoritative.
 
 ```powershell
 .\.venv\Scripts\python.exe -m compileall -q .

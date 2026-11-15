@@ -51,13 +51,14 @@ Agent 是后台监控主体，GUI 是控制和观察界面。隐藏或关闭 GUI
 
 - 默认配置一个 MAA；菜单、托盘、设置和通知测试都要能处理没有 MAA2 的情况。
 - 新版生产配置来自 `config/config.json`；升级用户原有的根目录 `config.json` 仍受支持。首次运行向导只在两处均无配置时启动，不覆盖已有配置。
+- AI 日报使用 OpenAI Chat Completions 兼容接口；`ai_*` 是当前配置名，旧版供应商专用键仍作为只读回退，避免升级后失效。
 - `state/` 中的 offset、计划状态、资源历史和通知队列需要兼容 Agent 重启；写入状态时优先沿用“临时文件 + replace”的原子方式。
 - 不同安装目录的配置、`state/` 和 `logs/` 不应混用。
 
 ## 隐私与安全
 
 - `config/config.json`（及旧版根目录 `config.json`）、`.venv/`、`state/`、`logs/`、`backups/` 和 `disabled_alerts/` 都是本机数据，不进入版本库或 Release。
-- Bark Key、DeepSeek Key、GitHub token、真实日志和用户的本机路径不要写入受跟踪文件、测试样例或提交信息。
+- Bark Key、AI API Key、GitHub token、真实日志和用户的本机路径不要写入受跟踪文件、测试样例或提交信息。
 - 示例配置使用明显占位符；日志和异常中不要输出密钥值。
 - 不改动用户的 VPN、代理、DNS、TUN、防火墙或其他系统网络设置。连接失败时保留现场并报告结果。
 - 停止进程前使用 `app/agent_runtime.py` / `app/stop_agent.py` 的身份校验，避免根据模糊命令行误伤其他 Python 进程。
@@ -88,7 +89,7 @@ Agent 是后台监控主体，GUI 是控制和观察界面。隐藏或关闭 GUI
 | `tests/test_gui_widgets.py` | 自定义 Tk 控件、颜色和滚轮。 |
 | `tests/test_news_center.py` | 公告缓存、增量读取、正文清理和维护监督。 |
 
-`tools/windows/test_all_notifications.bat` 和 `tools/diagnostics/test_bark.py` 会真实发送 Bark；`tools/diagnostics/test_deepseek.py` 会访问外部 API。它们只在明确需要验证对应通道时运行，不属于普通回归测试。
+`tools/windows/test_all_notifications.bat` 和 `tools/diagnostics/test_bark.py` 会真实发送 Bark；`tools/diagnostics/test_ai.py` 会访问外部 AI API。它们只在明确需要验证对应通道时运行，不属于普通回归测试。
 
 ## 文档、提交与发布
 

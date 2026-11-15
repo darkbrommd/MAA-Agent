@@ -22,7 +22,7 @@ Date: 2026-09-20
 The additional tests verify:
 
 - Copilot once/always files follow the current Agent directory instead of hard-coded `D:\MAA-Agent`.
-- Startup status is a user-facing state snapshot and does not expose startup grace / DeepSeek policy / callback jargon.
+- Startup status is a user-facing state snapshot and does not expose startup grace / AI policy / callback jargon.
 - A new Agent copy can detect another `MAA-Agent*\agent.py` process in a backup/sibling directory.
 - The 24 notification drill templates avoid `TaskChainStart`, `TaskChainError`, PID, UUID, grace-window reasoning and similar internal implementation language.
 - Notification drill can preview all cases without sending Bark or mutating production incident/cooldown state.

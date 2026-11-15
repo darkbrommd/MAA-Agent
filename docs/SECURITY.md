@@ -6,7 +6,7 @@
 
 ## 如何报告
 
-如果问题可能暴露 Bark Key、DeepSeek Key、GitHub 凭据、本机文件或产生非预期的进程操作，请优先使用仓库的 **Security → Report a vulnerability** 私下报告。如果该入口暂时不可用，可以创建一个不含敏感细节的 Issue，请维护者建立私下沟通方式。
+如果问题可能暴露 Bark Key、AI API Key、GitHub 凭据、本机文件或产生非预期的进程操作，请优先使用仓库的 **Security → Report a vulnerability** 私下报告。如果该入口暂时不可用，可以创建一个不含敏感细节的 Issue，请维护者建立私下沟通方式。
 
 报告中可以包含：
 

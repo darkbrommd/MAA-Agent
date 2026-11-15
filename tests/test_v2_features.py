@@ -70,6 +70,12 @@ class GuiFormattingTests(unittest.TestCase):
             preferred.write_text("{}", encoding="utf-8")
             self.assertEqual(project_paths.config_path(root), preferred)
 
+    def test_legacy_ai_settings_keep_their_provider_endpoint_when_saved(self):
+        legacy = {"use_deepseek": True, "deepseek_api_key": "key", "deepseek_model": "model"}
+        self.assertEqual(maa_agent_gui.ai_config_value(legacy,"base_url",""),"https://api.deepseek.com")
+        current = {**legacy, "ai_base_url": "https://example.test/v1"}
+        self.assertEqual(maa_agent_gui.ai_config_value(current,"base_url",""),"https://example.test/v1")
+
     def test_public_release_metadata_and_portable_copilot_scripts(self):
         version = (ROOT / "metadata" / "VERSION").read_text(encoding="utf-8").strip()
         self.assertRegex(version, r"^\d+\.\d+\.\d+$")

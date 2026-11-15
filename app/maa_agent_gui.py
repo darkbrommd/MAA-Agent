@@ -53,7 +53,7 @@ ICON_ICO = ASSET_DIR / "app_icon.ico"
 SHOW_REQUEST_FILE = STATE_DIR / "gui_show.request"
 GUI_STATE_FILE = STATE_DIR / "gui_state.json"
 SCHEDULE_RUN_STATE_FILE = STATE_DIR / "schedule_run_status.json"
-SECRET_NAMES = {"bark_key", "deepseek_api_key"}
+SECRET_NAMES = {"bark_key", "ai_api_key", "deepseek_api_key"}
 TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 DETACHED = getattr(subprocess, "DETACHED_PROCESS", 0)
@@ -70,7 +70,30 @@ CONFIG_HELP = {
     "quiet_startup": "开启后，Agent 正常启动时不发 Bark；事故通知不受影响。",
     "enable_proxy_healthcheck": "关闭后不读取系统代理，也不发起外网健康探测；适合临时停用 VPN/代理时使用。",
     "launch_paths": "GUI 一键启动及可选的随 Agent 启动路径。",
+    "use_ai": "启用兼容 OpenAI Chat Completions 的 AI 日报分析。",
+    "ai_api_key": "所选 AI 服务的 API Key，只保存在本机 config.json。",
+    "ai_base_url": "AI 服务的 OpenAI 兼容 API 地址；留空时使用 OpenAI SDK 默认地址。",
+    "ai_model": "服务商提供的模型名称，以该服务的控制台或文档为准。",
 }
+
+
+def ai_config_value(config: dict, name: str, default=None):
+    legacy_names = {
+        "enabled": "use_deepseek",
+        "api_key": "deepseek_api_key",
+        "base_url": "deepseek_base_url",
+        "model": "deepseek_model",
+        "daily_report": "deepseek_daily_report",
+    }
+    current_name = "use_ai" if name == "enabled" else f"ai_{name}"
+    if current_name in config:
+        return config.get(current_name)
+    legacy_name = legacy_names[name]
+    if legacy_name in config:
+        return config.get(legacy_name)
+    if name == "base_url" and any(key in config for key in ("use_deepseek","deepseek_api_key","deepseek_model")):
+        return "https://api.deepseek.com"
+    return default
 
 
 PALETTES = {
@@ -963,7 +986,7 @@ class ManagerApp:
         self._toggle_field(news,"启用官网公告监控",self.news_enabled_var).grid(row=0,column=0,sticky="ew")
         ttk.Label(news,text="每日检查（逗号分隔）").grid(row=0,column=1,sticky="e",padx=(20,5))
         ttk.Entry(news,textvariable=self.news_times_var,width=20).grid(row=0,column=2,sticky="w")
-        ttk.Label(news,text="仅新增且标题/摘要命中维护关键词时读取正文；普通公告不调用 DeepSeek，也不发送通知。",style="Muted.TLabel").grid(row=1,column=0,columnspan=4,sticky="w",pady=(8,0))
+        ttk.Label(news,text="仅新增且标题/摘要命中维护关键词时读取正文；普通公告不调用 AI，也不发送通知。",style="Muted.TLabel").grid(row=1,column=0,columnspan=4,sticky="w",pady=(8,0))
         ttk.Label(news,textvariable=self.news_status_var,style="Muted.TLabel").grid(row=2,column=0,columnspan=4,sticky="w",pady=(5,0))
         bark = ttk.LabelFrame(settings_body, text="Bark 失败重试", padding=12)
         bark.pack(fill="x", pady=(12,0))
@@ -973,6 +996,18 @@ class ManagerApp:
         ttk.Label(bark,text="每次间隔（秒）").grid(row=0,column=2,sticky="e",padx=(22,6))
         ttk.Entry(bark,textvariable=self.bark_retry_sleep_var,width=8).grid(row=0,column=3,sticky="w")
         self._toggle_field(bark,"无限保留失败消息并持续补发（不会阻塞监控主循环）",self.bark_retry_infinite_var).grid(row=0,column=4,sticky="ew",padx=(24,0))
+        ai = ttk.LabelFrame(settings_body, text="AI 日报分析（OpenAI 兼容接口）", padding=12)
+        ai.pack(fill="x", pady=(12,0))
+        self.ai_enabled_var=tk.BooleanVar(); self.ai_base_url_var=tk.StringVar(); self.ai_model_var=tk.StringVar(); self.ai_api_key_var=tk.StringVar()
+        self._toggle_field(ai,"启用 AI 分析",self.ai_enabled_var).grid(row=0,column=0,sticky="ew",padx=(0,18),pady=4)
+        ttk.Label(ai,text="API 地址").grid(row=0,column=1,sticky="e",padx=(0,6))
+        ttk.Entry(ai,textvariable=self.ai_base_url_var,width=42).grid(row=0,column=2,sticky="ew",pady=4)
+        ttk.Label(ai,text="模型").grid(row=1,column=1,sticky="e",padx=(0,6))
+        ttk.Entry(ai,textvariable=self.ai_model_var,width=42).grid(row=1,column=2,sticky="ew",pady=4)
+        ttk.Label(ai,text="API Key").grid(row=2,column=1,sticky="e",padx=(0,6))
+        ttk.Entry(ai,textvariable=self.ai_api_key_var,show="•",width=42).grid(row=2,column=2,sticky="ew",pady=4)
+        ttk.Label(ai,text="适用于支持 OpenAI Chat Completions 的服务；地址留空时使用 OpenAI 默认接口。",style="Muted.TLabel").grid(row=3,column=0,columnspan=3,sticky="w",pady=(6,0))
+        ai.columnconfigure(2,weight=1)
         about = ttk.LabelFrame(settings_body, text="关于", padding=12)
         about.pack(fill="x", pady=(12,0))
         ttk.Label(about, text=f"MAA Agent v{APP_VERSION} · 作者：{AUTHOR_NAME}").pack(side="left")
@@ -1001,11 +1036,11 @@ class ManagerApp:
         report.pack(fill="x")
         self.enable_daily_var = tk.BooleanVar()
         self.daily_time_var = tk.StringVar()
-        self.deepseek_daily_var = tk.BooleanVar()
+        self.ai_daily_var = tk.BooleanVar()
         self._toggle_field(report, "启用每日报告", self.enable_daily_var).grid(row=0, column=0, sticky="ew", padx=(0, 16))
         ttk.Label(report, text="发送时间（HH:MM）").grid(row=0, column=1, sticky="e")
         ttk.Entry(report, textvariable=self.daily_time_var, width=9).grid(row=0, column=2, sticky="w", padx=(6, 18))
-        self._toggle_field(report, "有价值时调用 DeepSeek", self.deepseek_daily_var).grid(row=0, column=3, sticky="ew")
+        self._toggle_field(report, "有价值时调用 AI", self.ai_daily_var).grid(row=0, column=3, sticky="ew")
         self._toggle_field(report, "启用系统代理健康检查", self.proxy_check_var).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
 
         grid = ttk.LabelFrame(self.timing_tab, text="判断与采样时间", padding=12)
@@ -2095,6 +2130,10 @@ class ManagerApp:
         self.bark_retry_attempts_var.set(str(self.cfg.get("bark_retry_attempts",3)))
         self.bark_retry_sleep_var.set(str(self.cfg.get("bark_retry_sleep_seconds",3)))
         self.bark_retry_infinite_var.set(bool(self.cfg.get("bark_retry_infinite",False)))
+        self.ai_enabled_var.set(bool(ai_config_value(self.cfg,"enabled",False)))
+        self.ai_base_url_var.set(str(ai_config_value(self.cfg,"base_url","") or ""))
+        self.ai_model_var.set(str(ai_config_value(self.cfg,"model","") or ""))
+        self.ai_api_key_var.set(str(ai_config_value(self.cfg,"api_key","") or ""))
 
     def choose_launch_path(self,label):
         path=filedialog.askopenfilename(parent=self.root,title=f"选择 {label} 可执行文件",filetypes=(("可执行文件","*.exe"),("所有文件","*.*")))
@@ -2127,6 +2166,8 @@ class ManagerApp:
                 raise ValueError("重试次数至少为 1，间隔不能为负数。")
         except ValueError as exc:
             messagebox.showerror("Bark 重试设置错误",str(exc),parent=self.root); return
+        if self.ai_enabled_var.get() and (not self.ai_model_var.get().strip() or not self.ai_api_key_var.get().strip()):
+            messagebox.showerror("AI 设置不完整","启用 AI 分析时，请填写模型名称和 API Key。",parent=self.root); return
         old_dark=bool(self.cfg.get("gui_dark_mode",True))
         self.cfg["gui_start_agent_on_launch"]=self.start_agent_with_gui_var.get()
         self.cfg["gui_start_minimized"]=self.start_minimized_var.get()
@@ -2138,6 +2179,8 @@ class ManagerApp:
         self.cfg["maa_instance_aliases"]={k:v.get().strip() for k,v in self.instance_alias_vars.items()}
         self.cfg["enable_news_monitor"]=self.news_enabled_var.get(); self.cfg["news_check_times"]=values
         self.cfg["bark_retry_attempts"]=retry_attempts; self.cfg["bark_retry_sleep_seconds"]=retry_sleep; self.cfg["bark_retry_infinite"]=self.bark_retry_infinite_var.get()
+        self.cfg["use_ai"]=self.ai_enabled_var.get(); self.cfg["ai_base_url"]=self.ai_base_url_var.get().strip()
+        self.cfg["ai_model"]=self.ai_model_var.get().strip(); self.cfg["ai_api_key"]=self.ai_api_key_var.get().strip()
         try:
             atomic_save_config(self.cfg)
             marker=startup_marker_path()
@@ -2188,7 +2231,7 @@ class ManagerApp:
     def load_timing(self):
         self.enable_daily_var.set(bool(self.cfg.get("enable_daily_report", True)))
         self.daily_time_var.set(str(self.cfg.get("daily_report_time", "23:50")))
-        self.deepseek_daily_var.set(bool(self.cfg.get("deepseek_daily_report", True)))
+        self.ai_daily_var.set(bool(ai_config_value(self.cfg,"daily_report",True)))
         self.proxy_check_var.set(bool(self.cfg.get("enable_proxy_healthcheck", True)))
         for _label, key, _kind in TIMING_FIELDS:
             self.timing_vars[key].set(str(self.cfg.get(key, "")))
@@ -2201,7 +2244,7 @@ class ManagerApp:
         updates = {
             "enable_daily_report": self.enable_daily_var.get(),
             "daily_report_time": daily_time,
-            "deepseek_daily_report": self.deepseek_daily_var.get(),
+            "ai_daily_report": self.ai_daily_var.get(),
             "enable_proxy_healthcheck": self.proxy_check_var.get(),
         }
         try:
@@ -2291,6 +2334,7 @@ class ManagerApp:
             return
         self.config_dirty = False
         self.load_timing()
+        self.load_settings()
         self._set_footer("config.json 已保存，并创建/更新 config.json.bak。")
 
     def reload_config(self):
