@@ -27,12 +27,22 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import psutil
 
+try:
+    from PIL import Image, ImageTk
+    import win32api
+    import win32con
+    import win32gui
+    import win32ui
+except ImportError:
+    Image = ImageTk = win32api = win32con = win32gui = win32ui = None
+
 from agent_runtime import AgentMutex, PACKAGED_AGENT_FLAG, agent_entry_path, find_running_agents, is_script_for_installation, request_stop, validated_agent_for_dir
 from schedule_utils import add_override, effective_occurrences, remove_override
 from diagnostic_commands import enqueue as enqueue_diagnostic
 from news_monitor import load_news_cache, refresh_news_cache
 from gui_widgets import InlineCalendar, ScrollableFrame, ToggleSwitch
 from resource_history import load_calendar_day as load_resource_calendar_day, memory_values, operational_date
+from resource_whitelist import normalize_resource_whitelist
 from first_run_setup import configured_maa_labels, run_first_setup
 from project_paths import config_path, installation_root, version_path
 
@@ -40,7 +50,119 @@ from project_paths import config_path, installation_root, version_path
 APP_DIR = Path(__file__).resolve().parent
 BASE_DIR = installation_root(__file__)
 VERSION_PATH = version_path(BASE_DIR)
-APP_VERSION = VERSION_PATH.read_text(encoding="utf-8").strip()
+
+
+def windows_executable_version(path: str | Path) -> str | None:
+    if os.name != "nt" or win32api is None:
+        return None
+    try:
+        info = win32api.GetFileVersionInfo(str(path), "\\")
+        ms, ls = info["FileVersionMS"], info["FileVersionLS"]
+        return f"{ms >> 16}.{ms & 0xffff}.{ls >> 16}"
+    except Exception:
+        return None
+
+
+def application_version() -> str:
+    if getattr(sys, "frozen", False):
+        embedded = windows_executable_version(sys.executable)
+        if embedded:
+            return embedded
+    return VERSION_PATH.read_text(encoding="utf-8").strip()
+
+
+def executable_display_name(path: str | Path) -> str:
+    target = Path(path)
+    if win32api is not None:
+        try:
+            translations = win32api.GetFileVersionInfo(str(target), r"\VarFileInfo\Translation")
+            if translations:
+                language, codepage = translations[0]
+                value = win32api.GetFileVersionInfo(
+                    str(target), f"\\StringFileInfo\\{language:04x}{codepage:04x}\\FileDescription"
+                )
+                if str(value).strip():
+                    return str(value).strip()
+        except Exception:
+            pass
+    return target.stem
+
+
+def executable_icon(path: str | Path, size: int = 24):
+    if None in (Image, ImageTk, win32gui, win32ui, win32con):
+        return None
+    icons = ()
+    bitmap = memory_dc = screen_dc = screen_handle = None
+    try:
+        large, small = win32gui.ExtractIconEx(str(path), 0)
+        icons = tuple(small or large)
+        if not icons:
+            return None
+        screen_handle = win32gui.GetDC(0)
+        screen_dc = win32ui.CreateDCFromHandle(screen_handle)
+        memory_dc = screen_dc.CreateCompatibleDC()
+        bitmap = win32ui.CreateBitmap()
+        bitmap.CreateCompatibleBitmap(screen_dc, size, size)
+        memory_dc.SelectObject(bitmap)
+        win32gui.DrawIconEx(memory_dc.GetSafeHdc(), 0, 0, icons[0], size, size, 0, None, win32con.DI_NORMAL)
+        raw = bitmap.GetBitmapBits(True)
+        image = Image.frombuffer("RGBA", (size, size), raw, "raw", "BGRA", 0, 1)
+        return ImageTk.PhotoImage(image)
+    except Exception:
+        return None
+    finally:
+        for icon in icons:
+            try:
+                win32gui.DestroyIcon(icon)
+            except Exception:
+                pass
+        if memory_dc is not None:
+            try:
+                memory_dc.DeleteDC()
+            except Exception:
+                pass
+        if screen_dc is not None:
+            try:
+                screen_dc.Detach()
+            except Exception:
+                pass
+        if screen_handle is not None:
+            try:
+                win32gui.ReleaseDC(0,screen_handle)
+            except Exception:
+                pass
+        if bitmap is not None:
+            try:
+                win32gui.DeleteObject(bitmap.GetHandle())
+            except Exception:
+                pass
+
+
+def whitelist_entry_for_executable(path: str | Path, *, enabled: bool = True) -> dict:
+    target=Path(path).resolve()
+    return {
+        "name": executable_display_name(target),
+        "process_name": target.name,
+        "path": str(target),
+        "enabled": bool(enabled),
+    }
+
+
+def fill_running_whitelist_paths(entries: list[dict]) -> list[dict]:
+    missing={str(entry.get("process_name") or "").casefold():entry for entry in entries if not entry.get("path")}
+    if not missing:
+        return entries
+    for proc in psutil.process_iter(["name","exe"]):
+        try:
+            name=str(proc.info.get("name") or "").casefold(); executable=str(proc.info.get("exe") or "")
+            if name in missing and executable:
+                missing[name]["path"]=executable
+        except psutil.Error:
+            continue
+    return entries
+
+
+APP_VERSION = application_version()
 AUTHOR_NAME = "Taylor Yu"
 AUTHOR_URL = "https://github.com/darkbrommd"
 APP_DISPLAY_NAME = "MAA Agent"
@@ -74,6 +196,9 @@ CONFIG_HELP = {
     "ai_api_key": "所选 AI 服务的 API Key，只保存在本机 config.json。",
     "ai_base_url": "AI 服务的 OpenAI 兼容 API 地址；留空时使用 OpenAI SDK 默认地址。",
     "ai_model": "服务商提供的模型名称，以该服务的控制台或文档为准。",
+    "resource_whitelist": "勾选的程序视为预期重负载；严重低内存仍会报警。",
+    "memory_pressure_percent": "普通内存报警的系统占用百分比阈值。",
+    "memory_critical_percent": "严重内存报警的系统占用百分比阈值。",
 }
 
 
@@ -477,8 +602,6 @@ TIMING_FIELDS = [
     ("连接错误无进展（分钟）", "connection_error_stall_minutes", "float"),
     ("计划漏跑宽限（分钟）", "scheduled_run_grace_minutes", "float"),
     ("窗口未响应持续（分钟）", "hung_window_sustain_minutes", "float"),
-    ("内存压力持续（分钟）", "memory_pressure_sustain_minutes", "float"),
-    ("内存严重压力持续（分钟）", "memory_critical_sustain_minutes", "float"),
     ("代理探测间隔（分钟）", "proxy_healthcheck_interval_minutes", "float"),
     ("代理失败持续（分钟）", "proxy_failure_sustain_minutes", "float"),
     ("外部心跳间隔（分钟）", "heartbeat_interval_minutes", "float"),
@@ -535,12 +658,22 @@ def start_agent_process() -> tuple[bool, str]:
         return False, f"检测到另一份 Agent：{others[0]['script']}（PID {others[0]['pid']}）。"
     try:
         entry = agent_entry_path(BASE_DIR)
-        command = [str(entry), PACKAGED_AGENT_FLAG] if entry.suffix.lower() == ".exe" else [str(_agent_python()), str(entry)]
+        packaged = entry.suffix.lower() == ".exe"
+        command = [str(entry), PACKAGED_AGENT_FLAG] if packaged else [str(_agent_python()), str(entry)]
+        child_environment = None
+        if packaged:
+            # A second launch of the same PyInstaller one-file executable is an
+            # independent long-running process, not a worker of the manager.
+            # Force a private extraction directory so certifi's CA bundle does
+            # not disappear when the manager exits and cleans up its _MEI dir.
+            child_environment = os.environ.copy()
+            child_environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
         subprocess.Popen(
             command,
             cwd=str(BASE_DIR),
             creationflags=NO_WINDOW | NEW_GROUP,
             close_fds=True,
+            env=child_environment,
         )
         return True, "启动请求已发送。"
     except OSError as exc:
@@ -644,8 +777,19 @@ class ManagerApp:
         style.configure("TLabelframe", background=palette["bg"], foreground=palette["fg"])
         style.configure("TLabelframe.Label", background=palette["bg"], foreground=palette["fg"])
         style.configure("TLabel", background=palette["bg"], foreground=palette["fg"])
+        style.map("TLabel", foreground=[("disabled", palette["muted"])])
         style.configure("TButton", background=palette["field"], foreground=palette["fg"], padding=(9, 5))
-        style.map("TButton", background=[("active", palette["accent"])], foreground=[("active", "#ffffff")])
+        style.map(
+            "TButton",
+            background=[("disabled", palette["panel"]), ("active", palette["accent"])],
+            foreground=[("disabled", palette["muted"]), ("active", "#ffffff")],
+        )
+        style.configure("TEntry", fieldbackground=palette["field"], foreground=palette["fg"], insertcolor=palette["fg"])
+        style.map(
+            "TEntry",
+            fieldbackground=[("disabled", palette["panel"]), ("readonly", palette["field"])],
+            foreground=[("disabled", palette["muted"]), ("readonly", palette["fg"])],
+        )
         style.configure(
             "TCombobox",
             fieldbackground=palette["field"],
@@ -934,10 +1078,50 @@ class ManagerApp:
             command=lambda enabled: variable.set(bool(enabled)),
         )
         switch.pack(side="right")
-        label.bind("<Button-1>", lambda _event: variable.set(not variable.get()))
+        label.bind("<Button-1>", lambda _event: variable.set(not variable.get()) if switch._enabled else None)
         variable.trace_add("write", lambda *_args, control=switch, var=variable: control.set(bool(var.get())))
+        field._toggle_switch = switch
+        field._toggle_label = label
         self.setting_switches.append(switch)
         return field
+
+    @staticmethod
+    def _set_toggle_enabled(field: ttk.Frame, enabled: bool) -> None:
+        switch = getattr(field, "_toggle_switch", None)
+        label = getattr(field, "_toggle_label", None)
+        if switch is not None:
+            switch.set_enabled(enabled)
+        if label is not None:
+            label.state(["!disabled"] if enabled else ["disabled"])
+
+    @staticmethod
+    def _set_widgets_enabled(widgets, enabled: bool) -> None:
+        for widget in widgets:
+            try:
+                widget.state(["!disabled"] if enabled else ["disabled"])
+            except (AttributeError, tk.TclError):
+                pass
+
+    def _refresh_setting_states(self, *_args) -> None:
+        if hasattr(self, "bark_detail_widgets"):
+            bark_enabled=bool(self.bark_enabled_var.get())
+            self._set_widgets_enabled(self.bark_detail_widgets, bark_enabled)
+            if hasattr(self,"bark_retry_field"):
+                self._set_toggle_enabled(self.bark_retry_field,bark_enabled)
+        if hasattr(self, "memory_detail_widgets"):
+            self._set_widgets_enabled(self.memory_detail_widgets, bool(self.memory_alert_var.get()))
+        if hasattr(self, "ai_detail_widgets"):
+            enabled = bool(self.ai_enabled_var.get())
+            self._set_widgets_enabled(self.ai_detail_widgets, enabled)
+            complete = enabled and bool(self.ai_model_var.get().strip()) and bool(self.ai_api_key_var.get().strip())
+            if not enabled:
+                self.ai_hint_var.set("打开开关后可填写接口信息。")
+            elif not complete:
+                self.ai_hint_var.set("填写模型名称和 API Key 后即可启用日报分析。")
+            else:
+                self.ai_hint_var.set("AI 已配置；是否调用由“时间策略”中的开关决定。")
+            if hasattr(self, "ai_daily_field"):
+                self._set_toggle_enabled(self.ai_daily_field, complete)
 
     def _build_settings(self):
         self.settings_scroll = ScrollableFrame(self.settings_tab, palette=self.palette)
@@ -954,11 +1138,9 @@ class ManagerApp:
         self._toggle_field(behavior,"打开管理器时确保 Agent 已启动",self.start_agent_with_gui_var).grid(row=0,column=1,sticky="ew",pady=4)
         self._toggle_field(behavior,"开机启动时直接进入托盘",self.start_minimized_var).grid(row=1,column=0,sticky="ew",padx=(0,24),pady=4)
         self._toggle_field(behavior,"深色模式（含资源图表）",self.dark_mode_var).grid(row=1,column=1,sticky="ew",pady=4)
-        self._toggle_field(behavior,"启用内存压力报警",self.memory_alert_var).grid(row=2,column=0,sticky="ew",padx=(0,24),pady=4)
-        ttk.Label(behavior,text="关闭后仍记录资源历史，但不会发送内存压力通知。",style="Muted.TLabel").grid(row=2,column=1,sticky="w",pady=4)
-        self._toggle_field(behavior,"启用系统代理健康检查",self.proxy_check_var).grid(row=3,column=0,sticky="ew",padx=(0,24),pady=4)
-        ttk.Label(behavior,text="关闭后 Agent 不读取代理配置，也不发起外网探测；不影响其他监控。",style="Muted.TLabel").grid(row=3,column=1,sticky="w",pady=4)
-        ttk.Label(behavior,text="任务栏固定由 Windows 管理：桌面和开始菜单快捷方式已创建，可右键它选择“固定到任务栏”。",style="Muted.TLabel").grid(row=4,column=0,columnspan=2,sticky="w",pady=(8,0))
+        self._toggle_field(behavior,"启用系统代理健康检查",self.proxy_check_var).grid(row=2,column=0,sticky="ew",padx=(0,24),pady=4)
+        ttk.Label(behavior,text="关闭后 Agent 不读取代理配置，也不发起外网探测；不影响其他监控。",style="Muted.TLabel").grid(row=2,column=1,sticky="w",pady=4)
+        ttk.Label(behavior,text="任务栏固定由 Windows 管理：桌面和开始菜单快捷方式已创建，可右键它选择“固定到任务栏”。",style="Muted.TLabel").grid(row=3,column=0,columnspan=2,sticky="w",pady=(8,0))
 
         apps = ttk.LabelFrame(settings_body, text="实例别名、程序路径与随 Agent 启动", padding=12)
         apps.pack(fill="x", pady=(12,0))
@@ -980,6 +1162,28 @@ class ManagerApp:
             self._toggle_field(apps,"随 Agent 启动",auto_var).grid(row=row,column=5,sticky="ew",padx=(10,0))
         apps.columnconfigure(2,weight=1)
 
+        memory = ttk.LabelFrame(settings_body, text="内存报警", padding=12)
+        memory.pack(fill="x", pady=(12,0))
+        self.memory_pressure_percent_var=tk.StringVar(); self.memory_pressure_minutes_var=tk.StringVar()
+        self.memory_critical_percent_var=tk.StringVar(); self.memory_critical_minutes_var=tk.StringVar(); self.memory_critical_available_var=tk.StringVar()
+        self.memory_toggle_field=self._toggle_field(memory,"启用内存报警",self.memory_alert_var)
+        self.memory_toggle_field.grid(row=0,column=0,sticky="ew",padx=(0,18),pady=4)
+        memory_labels=[]; memory_entries=[]
+        for row,(label,var,unit) in enumerate((
+            ("普通报警阈值",self.memory_pressure_percent_var,"%"),
+            ("普通报警持续",self.memory_pressure_minutes_var,"分钟"),
+            ("严重报警阈值",self.memory_critical_percent_var,"%"),
+            ("严重报警持续",self.memory_critical_minutes_var,"分钟"),
+            ("严重报警最低可用内存",self.memory_critical_available_var,"MB"),
+        )):
+            label_widget=ttk.Label(memory,text=label); label_widget.grid(row=row//2,column=1+(row%2)*3,sticky="e",padx=(8,6),pady=4)
+            entry=ttk.Entry(memory,textvariable=var,width=9); entry.grid(row=row//2,column=2+(row%2)*3,sticky="w",pady=4)
+            unit_widget=ttk.Label(memory,text=unit,style="Muted.TLabel"); unit_widget.grid(row=row//2,column=3+(row%2)*3,sticky="w",padx=(5,10),pady=4)
+            memory_labels.extend((label_widget,unit_widget)); memory_entries.append(entry)
+        self.memory_detail_widgets=memory_labels+memory_entries
+        ttk.Button(memory,text="管理资源白名单…",command=self.open_resource_whitelist).grid(row=3,column=0,sticky="w",pady=(8,0))
+        ttk.Label(memory,text="白名单程序的高占用视为预期负载；可用内存严重不足时仍会报警。",style="Muted.TLabel").grid(row=3,column=1,columnspan=5,sticky="w",padx=(8,0),pady=(8,0))
+
         news = ttk.LabelFrame(settings_body, text="明日方舟官网维护公告", padding=12)
         news.pack(fill="x", pady=(12,0))
         self.news_enabled_var=tk.BooleanVar(); self.news_times_var=tk.StringVar(); self.news_status_var=tk.StringVar()
@@ -988,26 +1192,41 @@ class ManagerApp:
         ttk.Entry(news,textvariable=self.news_times_var,width=20).grid(row=0,column=2,sticky="w")
         ttk.Label(news,text="仅新增且标题/摘要命中维护关键词时读取正文；普通公告不调用 AI，也不发送通知。",style="Muted.TLabel").grid(row=1,column=0,columnspan=4,sticky="w",pady=(8,0))
         ttk.Label(news,textvariable=self.news_status_var,style="Muted.TLabel").grid(row=2,column=0,columnspan=4,sticky="w",pady=(5,0))
-        bark = ttk.LabelFrame(settings_body, text="Bark 失败重试", padding=12)
+        bark = ttk.LabelFrame(settings_body, text="Bark 通知", padding=12)
         bark.pack(fill="x", pady=(12,0))
+        self.bark_enabled_var=tk.BooleanVar(); self.bark_server_var=tk.StringVar(); self.bark_key_var=tk.StringVar()
         self.bark_retry_attempts_var=tk.StringVar(); self.bark_retry_sleep_var=tk.StringVar(); self.bark_retry_infinite_var=tk.BooleanVar()
-        ttk.Label(bark,text="每次发送尝试次数").grid(row=0,column=0,sticky="e",padx=(0,6))
-        ttk.Entry(bark,textvariable=self.bark_retry_attempts_var,width=8).grid(row=0,column=1,sticky="w")
-        ttk.Label(bark,text="每次间隔（秒）").grid(row=0,column=2,sticky="e",padx=(22,6))
-        ttk.Entry(bark,textvariable=self.bark_retry_sleep_var,width=8).grid(row=0,column=3,sticky="w")
-        self._toggle_field(bark,"无限保留失败消息并持续补发（不会阻塞监控主循环）",self.bark_retry_infinite_var).grid(row=0,column=4,sticky="ew",padx=(24,0))
-        ai = ttk.LabelFrame(settings_body, text="AI 日报分析（OpenAI 兼容接口）", padding=12)
+        self.bark_toggle_field=self._toggle_field(bark,"启用 Bark 通知",self.bark_enabled_var)
+        self.bark_toggle_field.grid(row=0,column=0,sticky="ew",padx=(0,18),pady=4)
+        bark_server_label=ttk.Label(bark,text="服务地址"); bark_server_label.grid(row=0,column=1,sticky="e",padx=(0,6))
+        bark_server_entry=ttk.Entry(bark,textvariable=self.bark_server_var,width=42); bark_server_entry.grid(row=0,column=2,columnspan=3,sticky="ew",pady=4)
+        bark_key_label=ttk.Label(bark,text="API Key"); bark_key_label.grid(row=1,column=1,sticky="e",padx=(0,6))
+        bark_key_entry=ttk.Entry(bark,textvariable=self.bark_key_var,show="•",width=42); bark_key_entry.grid(row=1,column=2,columnspan=3,sticky="ew",pady=4)
+        retry_label=ttk.Label(bark,text="发送尝试次数"); retry_label.grid(row=2,column=1,sticky="e",padx=(0,6))
+        retry_entry=ttk.Entry(bark,textvariable=self.bark_retry_attempts_var,width=8); retry_entry.grid(row=2,column=2,sticky="w")
+        sleep_label=ttk.Label(bark,text="重试间隔"); sleep_label.grid(row=2,column=3,sticky="e",padx=(16,6))
+        sleep_entry=ttk.Entry(bark,textvariable=self.bark_retry_sleep_var,width=8); sleep_entry.grid(row=2,column=4,sticky="w")
+        sleep_unit=ttk.Label(bark,text="秒",style="Muted.TLabel"); sleep_unit.grid(row=2,column=5,sticky="w",padx=(5,0))
+        self.bark_retry_field=self._toggle_field(bark,"失败后持续补发，直到成功",self.bark_retry_infinite_var)
+        self.bark_retry_field.grid(row=3,column=1,columnspan=4,sticky="ew",pady=(6,0))
+        self.bark_detail_widgets=[bark_server_label,bark_server_entry,bark_key_label,bark_key_entry,retry_label,retry_entry,sleep_label,sleep_entry,sleep_unit]
+        bark.columnconfigure(2,weight=1)
+        ai = ttk.LabelFrame(settings_body, text="AI 分析（兼容 OpenAI 接口）", padding=12)
         ai.pack(fill="x", pady=(12,0))
-        self.ai_enabled_var=tk.BooleanVar(); self.ai_base_url_var=tk.StringVar(); self.ai_model_var=tk.StringVar(); self.ai_api_key_var=tk.StringVar()
-        self._toggle_field(ai,"启用 AI 分析",self.ai_enabled_var).grid(row=0,column=0,sticky="ew",padx=(0,18),pady=4)
-        ttk.Label(ai,text="API 地址").grid(row=0,column=1,sticky="e",padx=(0,6))
-        ttk.Entry(ai,textvariable=self.ai_base_url_var,width=42).grid(row=0,column=2,sticky="ew",pady=4)
-        ttk.Label(ai,text="模型").grid(row=1,column=1,sticky="e",padx=(0,6))
-        ttk.Entry(ai,textvariable=self.ai_model_var,width=42).grid(row=1,column=2,sticky="ew",pady=4)
-        ttk.Label(ai,text="API Key").grid(row=2,column=1,sticky="e",padx=(0,6))
-        ttk.Entry(ai,textvariable=self.ai_api_key_var,show="•",width=42).grid(row=2,column=2,sticky="ew",pady=4)
-        ttk.Label(ai,text="适用于支持 OpenAI Chat Completions 的服务；地址留空时使用 OpenAI 默认接口。",style="Muted.TLabel").grid(row=3,column=0,columnspan=3,sticky="w",pady=(6,0))
+        self.ai_enabled_var=tk.BooleanVar(); self.ai_base_url_var=tk.StringVar(); self.ai_model_var=tk.StringVar(); self.ai_api_key_var=tk.StringVar(); self.ai_hint_var=tk.StringVar()
+        self.ai_toggle_field=self._toggle_field(ai,"启用 AI 分析",self.ai_enabled_var)
+        self.ai_toggle_field.grid(row=0,column=0,sticky="ew",padx=(0,18),pady=4)
+        ai_url_label=ttk.Label(ai,text="接口地址（Base URL）"); ai_url_label.grid(row=0,column=1,sticky="e",padx=(0,6))
+        ai_url_entry=ttk.Entry(ai,textvariable=self.ai_base_url_var,width=42); ai_url_entry.grid(row=0,column=2,sticky="ew",pady=4)
+        ai_model_label=ttk.Label(ai,text="模型名称"); ai_model_label.grid(row=1,column=1,sticky="e",padx=(0,6))
+        ai_model_entry=ttk.Entry(ai,textvariable=self.ai_model_var,width=42); ai_model_entry.grid(row=1,column=2,sticky="ew",pady=4)
+        ai_key_label=ttk.Label(ai,text="API Key"); ai_key_label.grid(row=2,column=1,sticky="e",padx=(0,6))
+        ai_key_entry=ttk.Entry(ai,textvariable=self.ai_api_key_var,show="•",width=42); ai_key_entry.grid(row=2,column=2,sticky="ew",pady=4)
+        self.ai_detail_widgets=[ai_url_label,ai_url_entry,ai_model_label,ai_model_entry,ai_key_label,ai_key_entry]
+        ttk.Label(ai,textvariable=self.ai_hint_var,style="Muted.TLabel").grid(row=3,column=0,columnspan=3,sticky="w",pady=(6,0))
         ai.columnconfigure(2,weight=1)
+        for variable in (self.bark_enabled_var,self.memory_alert_var,self.ai_enabled_var,self.ai_model_var,self.ai_api_key_var):
+            variable.trace_add("write",self._refresh_setting_states)
         about = ttk.LabelFrame(settings_body, text="关于", padding=12)
         about.pack(fill="x", pady=(12,0))
         ttk.Label(about, text=f"MAA Agent v{APP_VERSION} · 作者：{AUTHOR_NAME}").pack(side="left")
@@ -1040,7 +1259,8 @@ class ManagerApp:
         self._toggle_field(report, "启用每日报告", self.enable_daily_var).grid(row=0, column=0, sticky="ew", padx=(0, 16))
         ttk.Label(report, text="发送时间（HH:MM）").grid(row=0, column=1, sticky="e")
         ttk.Entry(report, textvariable=self.daily_time_var, width=9).grid(row=0, column=2, sticky="w", padx=(6, 18))
-        self._toggle_field(report, "有价值时调用 AI", self.ai_daily_var).grid(row=0, column=3, sticky="ew")
+        self.ai_daily_field=self._toggle_field(report, "有价值时调用 AI", self.ai_daily_var)
+        self.ai_daily_field.grid(row=0, column=3, sticky="ew")
         self._toggle_field(report, "启用系统代理健康检查", self.proxy_check_var).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
 
         grid = ttk.LabelFrame(self.timing_tab, text="判断与采样时间", padding=12)
@@ -2130,10 +2350,20 @@ class ManagerApp:
         self.bark_retry_attempts_var.set(str(self.cfg.get("bark_retry_attempts",3)))
         self.bark_retry_sleep_var.set(str(self.cfg.get("bark_retry_sleep_seconds",3)))
         self.bark_retry_infinite_var.set(bool(self.cfg.get("bark_retry_infinite",False)))
+        self.bark_enabled_var.set(bool(self.cfg.get("enable_bark",False)))
+        self.bark_server_var.set(str(self.cfg.get("bark_server","https://api.day.app")))
+        self.bark_key_var.set(str(self.cfg.get("bark_key","") or ""))
+        self.memory_pressure_percent_var.set(str(self.cfg.get("memory_pressure_percent",88)))
+        self.memory_pressure_minutes_var.set(str(self.cfg.get("memory_pressure_sustain_minutes",30)))
+        self.memory_critical_percent_var.set(str(self.cfg.get("memory_critical_percent",95)))
+        self.memory_critical_minutes_var.set(str(self.cfg.get("memory_critical_sustain_minutes",10)))
+        self.memory_critical_available_var.set(str(self.cfg.get("memory_critical_available_mb",1536)))
+        self.resource_whitelist_entries=normalize_resource_whitelist(self.cfg)
         self.ai_enabled_var.set(bool(ai_config_value(self.cfg,"enabled",False)))
         self.ai_base_url_var.set(str(ai_config_value(self.cfg,"base_url","") or ""))
         self.ai_model_var.set(str(ai_config_value(self.cfg,"model","") or ""))
         self.ai_api_key_var.set(str(ai_config_value(self.cfg,"api_key","") or ""))
+        self._refresh_setting_states()
 
     def choose_launch_path(self,label):
         path=filedialog.askopenfilename(parent=self.root,title=f"选择 {label} 可执行文件",filetypes=(("可执行文件","*.exe"),("所有文件","*.*")))
@@ -2155,6 +2385,95 @@ class ManagerApp:
         except OSError as exc:
             messagebox.showerror("启动失败",str(exc),parent=self.root)
 
+    def open_resource_whitelist(self):
+        dialog=getattr(self,"resource_whitelist_dialog",None)
+        if dialog is not None and dialog.winfo_exists():
+            dialog.lift(); dialog.focus_force(); return
+        working=fill_running_whitelist_paths([dict(entry) for entry in getattr(self,"resource_whitelist_entries",normalize_resource_whitelist(self.cfg))])
+        dialog=tk.Toplevel(self.root); self.resource_whitelist_dialog=dialog
+        dialog.title("资源白名单"); dialog.geometry("920x620"); dialog.minsize(760,500); dialog.transient(self.root)
+        dialog.configure(background=self.palette["bg"])
+        body=ttk.Frame(dialog,padding=14); body.pack(fill="both",expand=True)
+        heading=tk.Frame(body,background=self.palette["panel"],padx=16,pady=14,highlightthickness=1,highlightbackground=self.palette["grid"])
+        heading.pack(fill="x",pady=(0,10))
+        tk.Label(heading,text="预期负载程序",background=self.palette["panel"],foreground=self.palette["fg"],font=("Microsoft YaHei UI",15,"bold")).pack(anchor="w")
+        tk.Label(heading,text="启用的程序不会触发普通持续高内存报警；可用内存达到严重条件时仍会报警。",background=self.palette["panel"],foreground=self.palette["muted"],font=("Microsoft YaHei UI",9),wraplength=840,justify="left").pack(anchor="w",pady=(5,0))
+        list_frame=ttk.LabelFrame(body,text="白名单程序",padding=8); list_frame.pack(fill="both",expand=True)
+        cards=ScrollableFrame(list_frame,palette=self.palette); cards.pack(fill="both",expand=True)
+        icon_refs=[]
+
+        def refresh():
+            for child in cards.body.winfo_children(): child.destroy()
+            icon_refs.clear()
+            if not working:
+                empty=tk.Frame(cards.body,background=self.palette["panel"],padx=16,pady=24,highlightthickness=1,highlightbackground=self.palette["grid"])
+                empty.pack(fill="x",pady=3)
+                tk.Label(empty,text="还没有白名单程序",background=self.palette["panel"],foreground=self.palette["fg"],font=("Microsoft YaHei UI",11,"bold")).pack()
+                tk.Label(empty,text="点击下方“添加程序”，选择需要忽略普通内存压力的 EXE。",background=self.palette["panel"],foreground=self.palette["muted"],font=("Microsoft YaHei UI",9)).pack(pady=(5,0))
+            for index,entry in enumerate(working):
+                card=tk.Frame(cards.body,background=self.palette["panel"],padx=13,pady=11,highlightthickness=1,highlightbackground=self.palette["grid"])
+                card.pack(fill="x",pady=3)
+                icon=executable_icon(entry.get("path",""),32) if entry.get("path") else None
+                if icon is not None: icon_refs.append(icon)
+                if icon is not None:
+                    tk.Label(card,image=icon,background=self.palette["panel"]).pack(side="left",padx=(0,12))
+                else:
+                    tk.Label(card,text="EXE",width=4,height=2,background=self.palette["field"],foreground=self.palette["muted"],font=("Segoe UI",8,"bold")).pack(side="left",padx=(0,12))
+                controls=tk.Frame(card,background=self.palette["panel"]); controls.pack(side="right",padx=(12,0))
+                toggle=ToggleSwitch(controls,value=bool(entry.get("enabled",True)),palette=dict(self.palette,bg=self.palette["panel"]),command=lambda enabled,i=index: working[i].update(enabled=bool(enabled)))
+                toggle.pack(anchor="e",pady=(0,7))
+                action_row=tk.Frame(controls,background=self.palette["panel"]); action_row.pack(anchor="e")
+                ttk.Button(action_row,text="路径…",width=7,command=lambda i=index:update_path(i)).pack(side="left")
+                ttk.Button(action_row,text="改名…",width=7,command=lambda i=index:rename_program(i)).pack(side="left",padx=(5,0))
+                ttk.Button(action_row,text="移除",width=6,command=lambda i=index:remove_program(i)).pack(side="left",padx=(5,0))
+                text=tk.Frame(card,background=self.palette["panel"]); text.pack(side="left",fill="x",expand=True)
+                tk.Label(text,text=entry.get("name") or entry.get("process_name") or "未命名程序",background=self.palette["panel"],foreground=self.palette["fg"],font=("Microsoft YaHei UI",10,"bold"),anchor="w").pack(fill="x")
+                process_name=str(entry.get("process_name") or "")
+                path_text=str(entry.get("path") or "仅按进程名匹配")
+                subtitle=f"{process_name}  ·  {path_text}" if process_name else path_text
+                tk.Label(text,text=subtitle,background=self.palette["panel"],foreground=self.palette["muted"],font=("Microsoft YaHei UI",8),anchor="w",justify="left",wraplength=560).pack(fill="x",pady=(4,0))
+            cards.refresh_scrollregion()
+
+        def add_program():
+            path=filedialog.askopenfilename(parent=dialog,title="选择要加入白名单的程序",filetypes=(("可执行文件","*.exe"),("所有文件","*.*")))
+            if not path: return
+            entry=whitelist_entry_for_executable(path)
+            identity=os.path.normcase(os.path.abspath(entry["path"]))
+            for current in working:
+                if current.get("path") and os.path.normcase(os.path.abspath(current["path"]))==identity:
+                    current.update(entry); refresh(); return
+            working.append(entry); refresh()
+
+        def update_path(index):
+            path=filedialog.askopenfilename(parent=dialog,title="选择新的可执行文件",filetypes=(("可执行文件","*.exe"),("所有文件","*.*")))
+            if not path: return
+            replacement=whitelist_entry_for_executable(path,enabled=working[index].get("enabled",True))
+            if working[index].get("name") and not working[index].get("path"):
+                replacement["name"]=working[index]["name"]
+            working[index]=replacement; refresh()
+
+        def rename_program(index):
+            value=simpledialog.askstring("程序名称","显示名称",initialvalue=working[index].get("name",""),parent=dialog)
+            if value and value.strip(): working[index]["name"]=value.strip(); refresh()
+
+        def remove_program(index):
+            working.pop(index); refresh()
+
+        def close_dialog():
+            self.resource_whitelist_dialog=None
+            dialog.destroy()
+
+        def accept():
+            self.resource_whitelist_entries=normalize_resource_whitelist({"resource_whitelist":working})
+            self._set_footer("资源白名单已更新；点击“保存设置”后生效。")
+            close_dialog()
+
+        actions=ttk.Frame(body); actions.pack(fill="x",pady=(12,0))
+        ttk.Button(actions,text="添加程序…",command=add_program).pack(side="left")
+        ttk.Button(actions,text="确定",command=accept).pack(side="right")
+        ttk.Button(actions,text="取消",command=close_dialog).pack(side="right",padx=(0,8))
+        dialog.protocol("WM_DELETE_WINDOW",close_dialog); refresh()
+
     def save_settings(self):
         values=[x.strip() for x in self.news_times_var.get().replace("，",",").split(",") if x.strip()]
         if not values or any(not TIME_RE.match(x) for x in values):
@@ -2166,18 +2485,39 @@ class ManagerApp:
                 raise ValueError("重试次数至少为 1，间隔不能为负数。")
         except ValueError as exc:
             messagebox.showerror("Bark 重试设置错误",str(exc),parent=self.root); return
+        if self.bark_enabled_var.get() and (not self.bark_server_var.get().strip() or not self.bark_key_var.get().strip()):
+            messagebox.showerror("Bark 设置不完整","启用 Bark 通知时，请填写服务地址和 API Key。",parent=self.root); return
         if self.ai_enabled_var.get() and (not self.ai_model_var.get().strip() or not self.ai_api_key_var.get().strip()):
             messagebox.showerror("AI 设置不完整","启用 AI 分析时，请填写模型名称和 API Key。",parent=self.root); return
+        try:
+            memory_pressure=float(self.memory_pressure_percent_var.get().strip())
+            memory_pressure_minutes=float(self.memory_pressure_minutes_var.get().strip())
+            memory_critical=float(self.memory_critical_percent_var.get().strip())
+            memory_critical_minutes=float(self.memory_critical_minutes_var.get().strip())
+            memory_available=float(self.memory_critical_available_var.get().strip())
+            if not 1 <= memory_pressure <= 100 or not 1 <= memory_critical <= 100:
+                raise ValueError("内存占用阈值必须在 1% 到 100% 之间。")
+            if memory_pressure > memory_critical:
+                raise ValueError("普通报警阈值不能高于严重报警阈值。")
+            if memory_pressure_minutes < 0 or memory_critical_minutes < 0 or memory_available <= 0:
+                raise ValueError("持续时间不能为负数，最低可用内存必须大于 0。")
+        except ValueError as exc:
+            messagebox.showerror("内存报警设置错误",str(exc),parent=self.root); return
         old_dark=bool(self.cfg.get("gui_dark_mode",True))
         self.cfg["gui_start_agent_on_launch"]=self.start_agent_with_gui_var.get()
         self.cfg["gui_start_minimized"]=self.start_minimized_var.get()
         self.cfg["gui_dark_mode"]=self.dark_mode_var.get()
         self.cfg["enable_memory_alert"]=self.memory_alert_var.get()
+        self.cfg["memory_pressure_percent"]=memory_pressure; self.cfg["memory_pressure_sustain_minutes"]=memory_pressure_minutes
+        self.cfg["memory_critical_percent"]=memory_critical; self.cfg["memory_critical_sustain_minutes"]=memory_critical_minutes
+        self.cfg["memory_critical_available_mb"]=memory_available
+        self.cfg["resource_whitelist"]=[dict(entry) for entry in getattr(self,"resource_whitelist_entries",[])]
         self.cfg["enable_proxy_healthcheck"]=self.proxy_check_var.get()
         self.cfg["launch_paths"]={k:v.get().strip() for k,v in self.launch_path_vars.items()}
         self.cfg["auto_start_apps_with_agent"]={k:v.get() for k,v in self.autostart_vars.items()}
         self.cfg["maa_instance_aliases"]={k:v.get().strip() for k,v in self.instance_alias_vars.items()}
         self.cfg["enable_news_monitor"]=self.news_enabled_var.get(); self.cfg["news_check_times"]=values
+        self.cfg["enable_bark"]=self.bark_enabled_var.get(); self.cfg["bark_server"]=self.bark_server_var.get().strip(); self.cfg["bark_key"]=self.bark_key_var.get().strip()
         self.cfg["bark_retry_attempts"]=retry_attempts; self.cfg["bark_retry_sleep_seconds"]=retry_sleep; self.cfg["bark_retry_infinite"]=self.bark_retry_infinite_var.get()
         self.cfg["use_ai"]=self.ai_enabled_var.get(); self.cfg["ai_base_url"]=self.ai_base_url_var.get().strip()
         self.cfg["ai_model"]=self.ai_model_var.get().strip(); self.cfg["ai_api_key"]=self.ai_api_key_var.get().strip()

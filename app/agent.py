@@ -22,6 +22,7 @@ from schedule_utils import effective_occurrences, load_overrides, occurrence_key
 from diagnostic_commands import consume as consume_diagnostic_commands, save_result as save_diagnostic_result
 from news_monitor import poll as poll_news
 from resource_history import sample as sample_resource_history
+from resource_whitelist import normalize_resource_whitelist, process_matches as whitelist_process_matches
 from project_paths import config_path, current_entry_path, installation_root
 
 import psutil
@@ -783,11 +784,16 @@ def process_memory_snapshot(limit=6):
 
 
 def expected_heavy_processes_running():
-    configured = {x.lower() for x in cfg.get("expected_heavy_process_names", [])}; found = []
-    for proc in psutil.process_iter(["name"]):
+    configured = [entry for entry in normalize_resource_whitelist(cfg) if entry.get("enabled")]; found = []
+    for proc in psutil.process_iter(["name", "exe"]):
         try:
-            name = (proc.info.get("name") or "").lower()
-            if name in configured and name not in found: found.append(name)
+            name = proc.info.get("name") or ""
+            executable = proc.info.get("exe") or ""
+            for entry in configured:
+                if whitelist_process_matches(entry,name,executable):
+                    process_name=str(entry.get("process_name") or name).lower()
+                    if process_name not in found: found.append(process_name)
+                    break
         except psutil.Error: pass
     return found
 

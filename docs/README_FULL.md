@@ -4,6 +4,7 @@
   <p>监控 MAA、分析异常，并把每日摘要送到手机的每日清杂助手</p>
 
   [![Release](https://img.shields.io/github/v/release/darkbrommd/MAA-Agent?display_name=tag&style=flat-square)](https://github.com/darkbrommd/MAA-Agent/releases/latest)
+  [![CI](https://github.com/darkbrommd/MAA-Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/darkbrommd/MAA-Agent/actions/workflows/ci.yml)
   [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat-square&logo=windows)](https://github.com/darkbrommd/MAA-Agent/releases/latest)
   [![Tests](https://img.shields.io/badge/tests-passing-2ea44f?style=flat-square)](#开发与测试)
 
@@ -24,7 +25,7 @@ MAA Agent 是一个监控 MAA、分析异常，并把每日摘要送到手机的
 |---|---|---|
 | 🗓️ | 看日程 | 集中查看接下来要运行的任务，以及运行中、完成或失败的状态。 |
 | 🔔 | 发提醒 | MAA 没有运行、任务没有按时开始或电脑资源不足时，通过 Bark 提醒。 |
-| 📊 | 看资源 | 查看 CPU、内存、磁盘以及 MAA/MuMu 的资源历史。 |
+| 📊 | 看资源 | 查看 CPU、内存、磁盘以及 MAA/MuMu 的资源历史，可调内存报警阈值并管理预期负载白名单。 |
 | 📝 | 自动日报与 AI 分析 | 每天汇总计划任务、资源趋势和待处理异常。接入兼容 AI 服务后，会在出现值得关注的问题或资源压力时自动生成分析，给出结论和建议；配置 Bark 后，日报会把这些内容推送到手机。 |
 | 📰 | 看公告 | 增量读取明日方舟官网公告，并识别可能影响计划的维护时间。 |
 | 🧰 | 管理运行 | 从桌面窗口或托盘启动、停止和查看 Agent，也支持一个或两个 MAA。 |
@@ -56,7 +57,7 @@ Copy-Item config\config.example.json config\config.json
 
 - 主界面显示 MAA/MuMu 状态、未来计划、最近事件和资源趋势。
 - “日程时间轴”可以为某一次运行设置跳过或改时；它只改变提醒预期，不会修改 MAA 自己的定时器。
-- “设置”可调整开机启动、深色模式、实例别名、程序路径、Bark 和 AI 接口。
+- “设置”可调整开机启动、深色模式、实例别名、程序路径、Bark/AI 接口、内存报警阈值和资源白名单。
 - “通知测试”可以确认 Bark 与各项提醒是否正常，不会关闭或修改 MAA。
 - 关闭窗口后可以留在系统托盘，后台 Agent 会继续运行。
 
@@ -79,11 +80,12 @@ Copy-Item config\config.example.json config\config.json
 - **第二个 MAA：** 首次向导中选择“两个”，或之后在完整配置中添加 MAA2。
 - **Bark：** iPhone 手机提醒，可在首次向导跳过，之后再到设置中补充。
 - **AI 日报分析：** 默认关闭。支持 OpenAI Chat Completions 兼容接口，在“设置”中填写 API 地址、模型和 API Key 即可。地址留空时使用 OpenAI SDK 默认接口；启用后默认只在出现未解决异常，或内存、CPU 长时间偏高时调用，每天最多一次。
+- **资源白名单：** 在设置页选择可执行文件。勾选的程序会被视为预期重负载，避免普通持续高内存提醒；可用内存达到严重条件时仍会报警。
 - **外部 heartbeat：** 用于覆盖整机断电或完全断网等本机无法发送提醒的情况，默认不配置。
 
 ## 开发与测试
 
-当前稳定版本：**v1.3.0**，版本号以 [`metadata/VERSION`](../metadata/VERSION) 为准。
+当前稳定版本：**v1.4.0**，版本号以 [`metadata/VERSION`](../metadata/VERSION) 为准。
 
 ```powershell
 .\.venv\Scripts\python.exe -m compileall -q .
@@ -91,6 +93,8 @@ Copy-Item config\config.example.json config\config.json
 ```
 
 贡献代码请先阅读 [`CONTRIBUTING.md`](CONTRIBUTING.md)；AI 助手和维护者另见 [`AGENTS.md`](../AGENTS.md)，安全问题见 [`SECURITY.md`](SECURITY.md)。发布包由 `scripts\build_release.ps1` 生成。
+
+GitHub Actions 会在 Push 和 Pull Request 上使用 Windows + Python 3.11/3.14 运行测试；`Release` 工作流可在 Actions 页面手动输入版本号，完成测试、构建、SHA-256、来源证明和 GitHub Release 发布。
 
 ## 作者与致谢
 

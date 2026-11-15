@@ -80,6 +80,7 @@ class ToggleSwitch(tk.Canvas):
         self.palette = coerce_palette(palette)
         self.command = command
         self._value = bool(value)
+        self._enabled = True
         kwargs.setdefault("width", self.DEFAULT_WIDTH)
         kwargs.setdefault("height", self.DEFAULT_HEIGHT)
         kwargs.setdefault("bd", 0)
@@ -108,7 +109,14 @@ class ToggleSwitch(tk.Canvas):
         return self._value
 
     def toggle(self) -> bool:
+        if not self._enabled:
+            return self._value
         return self.set(not self._value, invoke=True)
+
+    def set_enabled(self, enabled: bool) -> None:
+        self._enabled = bool(enabled)
+        self.configure(takefocus=self._enabled, cursor="hand2" if self._enabled else "")
+        self.redraw()
 
     def set_palette(self, palette: dict) -> None:
         self.palette = coerce_palette(palette)
@@ -124,7 +132,10 @@ class ToggleSwitch(tk.Canvas):
         x0, y0 = inset, inset
         x1, y1 = width - inset, height - inset
         radius = (y1 - y0) / 2
-        track_fill = self.palette["accent"] if self._value else self.palette["grid"]
+        if not self._enabled:
+            track_fill = self.palette["grid_soft"]
+        else:
+            track_fill = self.palette["accent"] if self._value else self.palette["grid"]
 
         if self._has_focus():
             self.create_polygon(
@@ -142,7 +153,7 @@ class ToggleSwitch(tk.Canvas):
         padding = max(2.5, (y1 - y0) * 0.16)
         thumb_radius = max(2.0, (y1 - y0) / 2 - padding)
         center_y = (y0 + y1) / 2
-        if self._value:
+        if self._value and self._enabled:
             center_x = x1 - padding - thumb_radius
             thumb_fill = self.palette["panel"]
             thumb_outline = self.palette["accent"]
@@ -179,6 +190,8 @@ class ToggleSwitch(tk.Canvas):
 
     # -- events -------------------------------------------------------------
     def _on_click(self, _event=None) -> str:
+        if not self._enabled:
+            return "break"
         try:
             self.focus_set()
         except tk.TclError:
@@ -187,6 +200,8 @@ class ToggleSwitch(tk.Canvas):
         return "break"
 
     def _on_key(self, event) -> str:
+        if not self._enabled:
+            return "break"
         if event.keysym in ("space", "Return"):
             self.toggle()
             return "break"

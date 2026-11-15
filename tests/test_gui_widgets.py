@@ -144,6 +144,17 @@ class ToggleSwitchTests(TkWidgetTestCase):
         switch.set(True, invoke=True)
         self.assertIs(switch.get(), True)
 
+    def test_disabled_switch_ignores_mouse_and_keyboard(self):
+        seen=[]
+        switch=self.make_switch(command=seen.append)
+        switch.set_enabled(False)
+        switch.event_generate("<Button-1>",x=5,y=5)
+        switch.event_generate("<space>")
+        self.settle()
+        self.assertIs(switch.get(),False)
+        self.assertEqual(seen,[])
+        self.assertEqual(self.track_fill(switch),DARK["grid_soft"])
+
     def test_on_and_off_states_are_visually_distinct(self):
         switch = self.make_switch()
         off_track, off_thumb, off_box = self.track_fill(switch), switch.itemcget(

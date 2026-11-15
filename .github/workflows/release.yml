@@ -1,0 +1,85 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version without the leading v, for example 1.4.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release-windows:
+    name: Test, build, and publish Windows release
+    runs-on: windows-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: |
+            requirements/gui.txt
+            requirements/build.txt
+      - name: Validate release metadata
+        shell: pwsh
+        run: |
+          if ($env:VERSION -notmatch '^\d+\.\d+\.\d+$') { throw "Version must use MAJOR.MINOR.PATCH." }
+          $metadata = (Get-Content -LiteralPath metadata/VERSION -Raw).Trim()
+          if ($metadata -ne $env:VERSION) { throw "metadata/VERSION is $metadata, expected $env:VERSION." }
+          if (-not (Test-Path -LiteralPath "docs/RELEASE_NOTES_v$env:VERSION.md")) { throw "Release notes are missing." }
+          $releaseTags = @(gh release list --repo $env:GITHUB_REPOSITORY --limit 100 --json tagName --jq '.[].tagName')
+          if ($LASTEXITCODE -ne 0) { throw "Unable to query existing releases." }
+          if ($releaseTags -contains "v$env:VERSION") { throw "Release v$env:VERSION already exists." }
+      - name: Install build dependencies
+        run: python -m pip install -r requirements/gui.txt -r requirements/build.txt
+      - name: Compile Python sources
+        run: python -m compileall -q app tests tools
+      - name: Run regression tests
+        run: python -m unittest discover -s tests -v
+      - name: Build release package
+        run: ./scripts/build_release.ps1 -Version $env:VERSION
+      - name: Verify SHA-256 file
+        shell: pwsh
+        run: |
+          $zip = "dist/MAA-Agent-v$env:VERSION-Windows.zip"
+          $expected = (Get-Content -LiteralPath "dist/MAA-Agent-v$env:VERSION-Windows.sha256").Split(' ')[0]
+          $actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "SHA-256 mismatch: $actual != $expected" }
+      - name: Attest release package provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/MAA-Agent-v${{ inputs.version }}-Windows.zip
+      - name: Publish GitHub Release
+        shell: pwsh
+        run: |
+          gh release create "v$env:VERSION" `
+            "dist/MAA-Agent-v$env:VERSION-Windows.zip" `
+            "dist/MAA-Agent-v$env:VERSION-Windows.sha256" `
+            --repo $env:GITHUB_REPOSITORY `
+            --target $env:GITHUB_SHA `
+            --title "MAA Agent v$env:VERSION" `
+            --notes-file "docs/RELEASE_NOTES_v$env:VERSION.md"
+      - name: Preserve release files in the workflow run
+        uses: actions/upload-artifact@v4
+        with:
+          name: maa-agent-v${{ inputs.version }}-windows
+          path: |
+            dist/MAA-Agent-v${{ inputs.version }}-Windows.zip
+            dist/MAA-Agent-v${{ inputs.version }}-Windows.sha256
+          if-no-files-found: error
+          retention-days: 30

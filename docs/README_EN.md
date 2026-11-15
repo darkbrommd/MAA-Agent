@@ -4,6 +4,7 @@
   <p>A Windows desktop companion that monitors MAA, explains what needs attention, and sends a daily summary to your phone</p>
 
   [![Release](https://img.shields.io/github/v/release/darkbrommd/MAA-Agent?display_name=tag&style=flat-square)](https://github.com/darkbrommd/MAA-Agent/releases/latest)
+  [![CI](https://github.com/darkbrommd/MAA-Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/darkbrommd/MAA-Agent/actions/workflows/ci.yml)
   [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat-square&logo=windows)](https://github.com/darkbrommd/MAA-Agent/releases/latest)
   [![Tests](https://img.shields.io/badge/tests-passing-2ea44f?style=flat-square)](#development-and-tests)
 
@@ -24,7 +25,7 @@ It manages **one MAA installation by default**. For most users, setup is just ch
 |---|---|---|
 | 🗓️ | Schedule | See upcoming runs and whether they are running, completed, or failed. |
 | 🔔 | Reminders | Use Bark when MAA is not running, a task is late, or system resources are low. |
-| 📊 | Resources | Review CPU, memory, disk, MAA, and MuMu history. |
+| 📊 | Resources | Review CPU, memory, disk, MAA, and MuMu history; tune memory alerts and manage an expected-load whitelist. |
 | 📝 | Daily report & AI analysis | Summarizes scheduled runs, resource trends, and open issues each day. With a compatible AI service enabled, it analyzes noteworthy issues and adds a conclusion and suggested next steps; with Bark configured, the report goes to your phone. |
 | 📰 | Notices | Read new official Arknights notices and detect maintenance windows. |
 | 🧰 | Controls | Start, stop, and inspect the Agent from the desktop window or tray; one or two MAA installations are supported. |
@@ -56,7 +57,7 @@ Edit `config\config.json`, then reopen `MAA-Agent-GUI.bat`. A legacy root-level 
 
 - The dashboard shows MAA/MuMu status, upcoming runs, recent events, and resource trends.
 - The timeline can skip or reschedule monitoring for one run. It does not edit MAA's own timers.
-- Settings covers Windows startup, dark mode, aliases, launch paths, Bark, and the AI endpoint.
+- Settings covers Windows startup, dark mode, aliases, launch paths, Bark/AI endpoints, memory thresholds, and the resource whitelist.
 - Notification tests check Bark and reminder behavior without stopping or changing MAA.
 - Closing the window can leave the Agent running in the system tray.
 
@@ -79,11 +80,12 @@ Local `config.json`, secrets, logs, runtime state, backups, and the virtual envi
 - **Second MAA:** choose “two” in the first-run wizard, or add MAA2 later through the full configuration editor.
 - **Bark:** optional iPhone reminders; skip it during setup and add it later if preferred.
 - **AI daily analysis:** off by default. It accepts services that expose an OpenAI-compatible Chat Completions endpoint. Enter the endpoint URL, model name, and API key in Settings; once enabled, it runs only for unresolved incidents or sustained memory/CPU pressure, with one call per day by default.
+- **Resource whitelist:** choose executable files in Settings. Enabled entries are treated as expected heavy workloads for normal sustained-memory alerts; critically low available memory still triggers an alert.
 - **External heartbeat:** covers full power or network outages that a local app cannot report; it is not configured by default.
 
 ## Development and tests
 
-Current stable version: **v1.3.0**. [`metadata/VERSION`](../metadata/VERSION) is authoritative.
+Current stable version: **v1.4.0**. [`metadata/VERSION`](../metadata/VERSION) is authoritative.
 
 ```powershell
 .\.venv\Scripts\python.exe -m compileall -q .
@@ -91,6 +93,8 @@ Current stable version: **v1.3.0**. [`metadata/VERSION`](../metadata/VERSION) is
 ```
 
 Contributors should read [`CONTRIBUTING.md`](CONTRIBUTING.md); coding agents and maintainers can also use [`AGENTS.md`](../AGENTS.md). See [`SECURITY.md`](SECURITY.md) for private vulnerability reporting. `scripts\build_release.ps1` creates release packages.
+
+GitHub Actions tests pushes and pull requests on Windows with Python 3.11 and 3.14. The manually dispatched `Release` workflow verifies the version, runs tests, builds the EXE/ZIP, checks SHA-256, creates provenance attestation, and publishes the GitHub Release.
 
 ## Author and acknowledgement
 

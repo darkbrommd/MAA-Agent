@@ -5,9 +5,8 @@
 ## 从零部署
 
 1. 将 Release ZIP 解压到固定目录。
-2. 安装 Python 3.11 或更高版本。
-3. 双击 `MAA-Agent.exe`，直接进入首次配置向导；无需安装 Python。
-4. 向导默认配置一个 MAA，可选第二个 MAA 和 Bark。完成后进入主界面。
+2. 双击 `MAA-Agent.exe`，直接进入首次配置向导；无需安装 Python。
+3. 向导默认配置一个 MAA，可选第二个 MAA 和 Bark。完成后进入主界面。
 
 如需源码运行或排障，双击备用的 `MAA-Agent-GUI.bat`；也可自行创建 `.venv`、安装 `requirements/gui.txt`，再将 `config/config.example.json` 复制为私有的 `config/config.json`。
 
@@ -38,5 +37,7 @@ v1.1.1 起，根目录只保留日常入口 `MAA-Agent-GUI.bat`。如果曾为�
 v1.1.2 起，Python 程序源码统一放在 `app/`，真实联网的手动诊断工具放在 `tools/diagnostics/`。日常仍然只需从根目录启动 `MAA-Agent-GUI.bat`。
 
 v1.2.0 起，`MAA-Agent.exe` 是默认入口，同一个 EXE 分别承担管理器和后台 Agent 模式；BAT 与源码保留为兼容和排障入口。
+
+v1.4.0 起，Bark、AI 与内存报警可直接在设置页配置；资源白名单可按程序路径逐项启用。GitHub Actions 会自动测试 `main` 和 Pull Request，并为 `main` 生成 Windows 构建产物；正式版本由 `Release` 工作流发布。
 
 详细操作见 [`GUI_AND_OPERATIONS.md`](GUI_AND_OPERATIONS.md)，完整验收方法见 [`TESTING_GUIDE.md`](TESTING_GUIDE.md)。

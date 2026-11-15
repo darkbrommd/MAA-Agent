@@ -48,6 +48,7 @@
   "resource_sample_normal_minutes": 5,
   "resource_sample_abnormal_minutes": 1,
   "resource_history_keep_days": 30,
+  "resource_whitelist": [],
   "operational_day_start_hour": 4,
   "monitor_disk_paths": ["C:\\", "D:\\"],
   "enable_news_monitor": true,

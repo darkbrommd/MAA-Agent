@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-windows:
+    name: Test Windows / Python ${{ matrix.python-version }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.14"]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements/gui.txt
+      - name: Install dependencies
+        run: python -m pip install -r requirements/gui.txt
+      - name: Validate configuration template
+        run: python -m json.tool config/config.example.json > $null
+      - name: Compile Python sources
+        run: python -m compileall -q app tests tools
+      - name: Run regression tests
+        run: python -m unittest discover -s tests -v
+
+  build-windows:
+    name: Build Windows release artifact
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    needs: test-windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: |
+            requirements/gui.txt
+            requirements/build.txt
+      - name: Install build dependencies
+        run: python -m pip install -r requirements/gui.txt -r requirements/build.txt
+      - name: Build EXE and release package
+        run: ./scripts/build_release.ps1
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: maa-agent-windows-${{ github.sha }}
+          path: |
+            dist/MAA-Agent-v*-Windows.zip
+            dist/MAA-Agent-v*-Windows.sha256
+          if-no-files-found: error
+          retention-days: 14

@@ -16,6 +16,7 @@ import agent
 import diagnostic_commands
 import news_monitor
 import resource_history
+import resource_whitelist
 import maa_agent_gui
 import first_run_setup
 import project_paths
@@ -59,6 +60,11 @@ class NewsMonitorTests(unittest.TestCase):
 
 
 class GuiFormattingTests(unittest.TestCase):
+    def test_packaged_about_version_prefers_embedded_executable_version(self):
+        with patch.object(maa_agent_gui.sys,"frozen",True,create=True), \
+             patch.object(maa_agent_gui,"windows_executable_version",return_value="9.8.7"):
+            self.assertEqual(maa_agent_gui.application_version(),"9.8.7")
+
     def test_new_config_layout_prefers_config_directory_and_keeps_legacy_compatible(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -169,6 +175,7 @@ class GuiFormattingTests(unittest.TestCase):
         command = popen.call_args.args[0]
         self.assertEqual(Path(command[0]).resolve(), executable.resolve())
         self.assertEqual(command[1:], ["--maa-agent-background"])
+        self.assertEqual(popen.call_args.kwargs["env"]["PYINSTALLER_RESET_ENVIRONMENT"], "1")
 
     def test_dashboard_log_cutoff_does_not_change_source_text(self):
         text = "[2026-09-22 00:10:00] old\n[2026-09-22 00:11:00] new"
@@ -283,6 +290,16 @@ class PersistentDetectorTests(unittest.TestCase):
 
 
 class UtilityTests(unittest.TestCase):
+    def test_resource_whitelist_migrates_legacy_names_and_honours_enabled_state(self):
+        legacy=resource_whitelist.normalize_resource_whitelist({"expected_heavy_process_names":["Game.exe"]})
+        self.assertEqual(legacy,[{"name":"Game","process_name":"Game.exe","path":"","enabled":True}])
+        current={"resource_whitelist":[
+            {"name":"Game","process_name":"Game.exe","path":"D:\\Games\\Game.exe","enabled":False},
+            {"name":"Editor","process_name":"Editor.exe","path":"D:\\Tools\\Editor.exe","enabled":True},
+        ]}
+        self.assertEqual(resource_whitelist.enabled_process_names(current),{"editor.exe"})
+        self.assertTrue(resource_whitelist.process_matches(current["resource_whitelist"][1],"Editor.exe","D:\\Tools\\Editor.exe"))
+
     def test_diagnostic_queue_round_trip(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)

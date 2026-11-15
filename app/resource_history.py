@@ -14,6 +14,8 @@ from pathlib import Path
 
 import psutil
 
+from resource_whitelist import enabled_process_names
+
 
 def operational_date(moment: datetime, start_hour: int = 4):
     shifted = moment - timedelta(hours=start_hour)
@@ -53,7 +55,7 @@ def _category(name: str, cmdline: list[str], maa_names: set[str], mumu_names: se
 def _process_snapshot(cfg: dict, *, process_limit: int = 20, app_limit: int = 12) -> tuple[list[dict], list[dict], float]:
     maa_names = {str(x).lower() for x in cfg.get("maa_process_names", ["MAA.exe"])}
     mumu_names = {str(x).lower() for x in cfg.get("mumu_process_names", [])}
-    heavy_names = {str(x).lower() for x in cfg.get("expected_heavy_process_names", [])}
+    heavy_names = enabled_process_names(cfg)
     processes: list[dict] = []
     groups: dict[tuple[str, str], dict] = defaultdict(lambda: {"mb": 0.0, "count": 0})
     agent_mb = 0.0

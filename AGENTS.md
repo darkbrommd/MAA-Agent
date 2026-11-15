@@ -98,4 +98,5 @@ Agent 是后台监控主体，GUI 是控制和观察界面。隐藏或关闭 GUI
 - 人类贡献流程见 `docs/CONTRIBUTING.md`。
 - `metadata/VERSION` 是稳定版本号的唯一来源，使用 `MAJOR.MINOR.PATCH`。
 - 发布版本时同步更新中英文 README、`docs/RELEASE_NOTES_vX.Y.Z.md`、Git 标签和 GitHub Release，并上传 ZIP 与 SHA-256。
+- `.github/workflows/ci.yml` 是远端 Windows 测试与构建基线；`.github/workflows/release.yml` 是正式发布入口，版本输入必须与 `metadata/VERSION` 和 Release Notes 一致。
 - 已发布的标签保持不动；修复已经发布的内容时创建新版本。

@@ -25,6 +25,8 @@ py -3.11 -m venv .venv
 4. 更新会受影响的 README 或 `docs/` 页面。
 5. 提交 Pull Request，说明改动目的、验证方式和用户可见影响。
 
+Push 和 Pull Request 会触发 GitHub Actions，在 Windows 上分别使用 Python 3.11 与 3.14 运行编译和回归测试。正式版本由维护者在 Actions 页面手动运行 `Release` 工作流；工作流会核对 `metadata/VERSION`、Release Notes、测试、构建产物和 SHA-256。
+
 ## 验证
 
 ```powershell

@@ -21,6 +21,8 @@ tools\windows\run_regression_tests.bat
 
 正常结果以 `OK` 结束。失败时先看失败用例名称，再定位对应模块；不要通过修改真实 `config.json`、`state/` 或 MAA 配置来让单元测试通过。
 
+提交到 GitHub 后，`CI` 工作流会在 Windows + Python 3.11/3.14 上重复运行这些检查；`main` 通过后还会生成可下载的 Windows 构建产物。
+
 ## 2. 首次配置与 GUI
 
 在没有 `config.json` 的全新副本中双击 `MAA-Agent.exe`（另用 BAT 验证源码备用路径）：
@@ -30,6 +32,9 @@ tools\windows\run_regression_tests.bat
 3. 选择包含 `MAA.exe` 的文件夹后可以进入主界面；
 4. 未配置第二个 MAA 时，菜单、托盘、设置和通知测试不显示 MAA2；
 5. 已有 `config.json` 时不会再次打开向导。
+6. 设置页可编辑 Bark 服务地址/API Key、AI Base URL/模型/API Key，以及内存报警阈值；关闭 Bark、AI 或内存报警时对应控件应变灰。
+7. AI 模型或 API Key 未填完整时，“有价值时调用 AI”应保持灰色。
+8. 资源白名单窗口应能添加 EXE、显示名称/路径/图标并逐项启用；普通内存压力可被白名单抑制，严重低内存仍会报警。
 
 测试副本中的配置只用于验收，不要提交。
 

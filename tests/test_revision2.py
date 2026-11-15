@@ -533,6 +533,13 @@ class AgentLogicTests(unittest.TestCase):
             data["memory"]["pressure_minutes"] = 31
             self.assertTrue(agent.ai_daily_worth_calling(data))
 
+    def test_generic_resource_whitelist_marks_running_process_as_expected(self):
+        class FakeProcess:
+            info={"name":"Game.exe","exe":"D:\\Games\\Game.exe"}
+        config={"resource_whitelist":[{"name":"Game","process_name":"Game.exe","path":"D:\\Games\\Game.exe","enabled":True}]}
+        with isolated_agent(config), patch.object(agent.psutil,"process_iter",return_value=[FakeProcess()]):
+            self.assertEqual(agent.expected_heavy_processes_running(),["game.exe"])
+
     def test_ai_report_uses_configured_openai_compatible_endpoint(self):
         config = {
             "use_ai": True,

@@ -3,6 +3,8 @@
   <h1>MAA Agent</h1>
   <p>查看 MAA 计划与运行状态，接收异常提醒、每日日报和可选的 AI 分析。</p>
 
+  [![CI](https://github.com/darkbrommd/MAA-Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/darkbrommd/MAA-Agent/actions/workflows/ci.yml)
+
   [下载最新版](https://github.com/darkbrommd/MAA-Agent/releases/latest) · [MAA 官网](https://maa.plus/) · [完整说明](docs/README_FULL.md) · [English](docs/README_EN.md)
 </div>
 
@@ -21,8 +23,9 @@
 ## 常用设置
 
 - **MAA 路径：** 指向包含 `MAA.exe` 的文件夹；默认只配置一个 MAA。
-- **Bark：** 可选，用于把异常提醒和日报推送到 iPhone。
-- **AI 分析：** 可选，支持 OpenAI Chat Completions 兼容接口。启用后可对日报中的异常、资源趋势和运行质量自动生成结论与建议。
+- **Bark：** 可选，可在设置页填写服务地址和 API Key，把异常提醒与日报推送到 iPhone。
+- **AI 分析：** 可选，可在设置页填写 Base URL、模型和 API Key。未启用时相关选项保持灰色。
+- **内存报警：** 可调普通/严重阈值、持续时间和最低可用内存；资源白名单用于标记预期的高负载程序。
 - **日程改时/跳过：** 只改变 Agent 对本次任务的监督预期，不会修改 MAA 自己的定时器。
 - **本机配置：** 保存在 `config/config.json`；修改前可备份同目录文件，密钥不要上传或公开。
 

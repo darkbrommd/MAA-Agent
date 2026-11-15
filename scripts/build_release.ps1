@@ -18,7 +18,7 @@ $archivePath = Join-Path $outputRoot "$packageName.zip"
 $checksumPath = Join-Path $outputRoot "$packageName.sha256"
 
 $excludedFiles = @(".gitattributes", ".gitignore", "AGENTS.md", "README.md", "docs/internal/AGENTS.local.md", "MANIFEST.sha256")
-$excludedPrefixes = @("scripts/", "docs/CHANGES_", "docs/ROADMAP", "docs/TEST_REPORT")
+$excludedPrefixes = @(".github/", "scripts/", "docs/CHANGES_", "docs/ROADMAP", "docs/TEST_REPORT")
 
 function Test-ReleasePath([string]$RelativePath) {
     $normalized = $RelativePath.Replace("\", "/")
