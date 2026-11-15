@@ -54,7 +54,7 @@ jobs:
       - name: Run regression tests
         run: python -m unittest discover -s tests -v
       - name: Build release package
-        run: ./scripts/build_release.ps1 -Version $env:VERSION
+        run: ./scripts/build_release.ps1 -Version $env:VERSION -Python (Get-Command python).Source
       - name: Verify SHA-256 file
         shell: pwsh
         run: |

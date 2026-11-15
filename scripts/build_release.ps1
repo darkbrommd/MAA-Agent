@@ -1,6 +1,7 @@
 param(
     [string]$Version = "",
-    [string]$OutputDirectory = "dist"
+    [string]$OutputDirectory = "dist",
+    [string]$Python = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -34,7 +35,12 @@ if (Test-Path -LiteralPath $archivePath) { Remove-Item -LiteralPath $archivePath
 if (Test-Path -LiteralPath $checksumPath) { Remove-Item -LiteralPath $checksumPath -Force }
 New-Item -ItemType Directory -Path $stageRoot -Force | Out-Null
 
-$exePath = & (Join-Path $PSScriptRoot "build_exe.ps1")
+$buildScript = Join-Path $PSScriptRoot "build_exe.ps1"
+$exePath = if ([string]::IsNullOrWhiteSpace($Python)) {
+    & $buildScript
+} else {
+    & $buildScript -Python $Python
+}
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
     throw "Executable build failed."
 }
