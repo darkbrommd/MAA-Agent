@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = ROOT / "app"
@@ -245,6 +245,26 @@ class GuiFormattingTests(unittest.TestCase):
         running={key:{"status":"running","updated_at":now.strftime("%Y-%m-%d %H:%M:%S"),"current_task":"基建"}}
         self.assertEqual(app._schedule_card_state(row,now,{},running)[0],"正在进行")
         self.assertNotEqual(app._card_background("failed"),app._card_background("running"))
+
+    def test_dark_mode_switch_applies_and_persists_only_theme_immediately(self):
+        class Variable:
+            def __init__(self, value): self.value=value
+            def get(self): return self.value
+            def set(self, value): self.value=value
+
+        app=object.__new__(maa_agent_gui.ManagerApp)
+        app.cfg={"gui_dark_mode":False,"unsaved_ui_value":"keep"}
+        app.dark_mode_var=Variable(True); app.root=object()
+        app._apply_runtime_theme=Mock(); app.refresh_dashboard=Mock(); app.refresh_schedule=Mock()
+        app.refresh_resources=Mock(); app._set_footer=Mock()
+        with patch.object(maa_agent_gui,"load_config",return_value={"gui_dark_mode":False,"disk_value":"keep"}), \
+             patch.object(maa_agent_gui,"atomic_save_config") as save:
+            app._on_dark_mode_changed()
+        saved=save.call_args.args[0]
+        self.assertEqual(saved,{"gui_dark_mode":True,"disk_value":"keep"})
+        self.assertEqual(app.cfg["unsaved_ui_value"],"keep")
+        app._apply_runtime_theme.assert_called_once_with()
+        app.refresh_schedule.assert_called_once_with(force=True)
 
 
 class PersistentDetectorTests(unittest.TestCase):

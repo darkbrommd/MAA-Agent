@@ -777,7 +777,11 @@ class ManagerApp:
         style.configure("TLabelframe", background=palette["bg"], foreground=palette["fg"])
         style.configure("TLabelframe.Label", background=palette["bg"], foreground=palette["fg"])
         style.configure("TLabel", background=palette["bg"], foreground=palette["fg"])
-        style.map("TLabel", foreground=[("disabled", palette["muted"])])
+        style.map(
+            "TLabel",
+            background=[("disabled", palette["bg"])],
+            foreground=[("disabled", palette["muted"])],
+        )
         style.configure("TButton", background=palette["field"], foreground=palette["fg"], padding=(9, 5))
         style.map(
             "TButton",
@@ -829,7 +833,12 @@ class ManagerApp:
         style.configure("DateTitle.TLabel", font=("Microsoft YaHei UI", 15, "bold"), foreground=palette["fg"])
         style.configure("Good.TLabel", foreground=palette["good"], font=("Microsoft YaHei UI", 12, "bold"))
         style.configure("Bad.TLabel", foreground=palette["bad"], font=("Microsoft YaHei UI", 12, "bold"))
-        style.configure("Muted.TLabel", foreground=palette["muted"])
+        style.configure("Muted.TLabel", background=palette["bg"], foreground=palette["muted"])
+        style.map(
+            "Muted.TLabel",
+            background=[("disabled", palette["bg"])],
+            foreground=[("disabled", palette["muted"])],
+        )
         style.configure("Link.TLabel", foreground=palette["accent"])
 
     def _build_ui(self):
@@ -1123,6 +1132,32 @@ class ManagerApp:
             if hasattr(self, "ai_daily_field"):
                 self._set_toggle_enabled(self.ai_daily_field, complete)
 
+    def _on_dark_mode_changed(self, *_args) -> None:
+        if getattr(self, "_dark_mode_change_in_progress", False):
+            return
+        desired = bool(self.dark_mode_var.get())
+        previous = bool(self.cfg.get("gui_dark_mode", True))
+        if desired == previous:
+            return
+        try:
+            persisted = load_config()
+            persisted["gui_dark_mode"] = desired
+            atomic_save_config(persisted)
+        except Exception as exc:
+            self._dark_mode_change_in_progress = True
+            try:
+                self.dark_mode_var.set(previous)
+            finally:
+                self._dark_mode_change_in_progress = False
+            messagebox.showerror("主题切换失败", str(exc), parent=self.root)
+            return
+        self.cfg["gui_dark_mode"] = desired
+        self._apply_runtime_theme()
+        self._dashboard_schedule_signature = None
+        self._schedule_signature = None
+        self.refresh_dashboard(); self.refresh_schedule(force=True); self.refresh_resources()
+        self._set_footer("已切换并保存深色模式。" if desired else "已切换并保存浅色模式。")
+
     def _build_settings(self):
         self.settings_scroll = ScrollableFrame(self.settings_tab, palette=self.palette)
         self.settings_scroll.pack(fill="both", expand=True)
@@ -1227,6 +1262,7 @@ class ManagerApp:
         ai.columnconfigure(2,weight=1)
         for variable in (self.bark_enabled_var,self.memory_alert_var,self.ai_enabled_var,self.ai_model_var,self.ai_api_key_var):
             variable.trace_add("write",self._refresh_setting_states)
+        self.dark_mode_var.trace_add("write",self._on_dark_mode_changed)
         about = ttk.LabelFrame(settings_body, text="关于", padding=12)
         about.pack(fill="x", pady=(12,0))
         ttk.Label(about, text=f"MAA Agent v{APP_VERSION} · 作者：{AUTHOR_NAME}").pack(side="left")
