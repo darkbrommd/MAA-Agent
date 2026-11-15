@@ -77,7 +77,7 @@ jobs:
             --title "MAA Agent v$env:VERSION" `
             --notes-file "docs/RELEASE_NOTES_v$env:VERSION.md"
       - name: Preserve release files in the workflow run
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: maa-agent-v${{ inputs.version }}-windows
           path: |

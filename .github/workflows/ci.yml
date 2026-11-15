@@ -58,7 +58,7 @@ jobs:
       - name: Build EXE and release package
         run: ./scripts/build_release.ps1 -Python (Get-Command python).Source
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: maa-agent-windows-${{ github.sha }}
           path: |
