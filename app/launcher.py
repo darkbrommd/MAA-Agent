@@ -1,8 +1,11 @@
 """Single executable entry point for the manager and background Agent."""
 
+import os
 import sys
 
 from agent_runtime import PACKAGED_AGENT_FLAG
+
+GUI_V2_FLAG = "--gui-v2"
 
 
 def main() -> None:
@@ -10,6 +13,10 @@ def main() -> None:
         from agent import main as run_agent
 
         run_agent()
+    elif GUI_V2_FLAG in sys.argv[1:] or os.environ.get("MAA_AGENT_GUI", "").lower() == "v2":
+        from gui.main import main as run_manager
+
+        run_manager()
     else:
         from maa_agent_gui import main as run_manager
 

@@ -9,7 +9,7 @@ __pycache__/
 *.py[cod]
 
 # Generated state, logs and local recovery copies
-state/
+/state/
 logs/
 backups/
 disabled_alerts/

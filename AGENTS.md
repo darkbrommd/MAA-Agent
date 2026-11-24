@@ -17,7 +17,7 @@ MAA Agent 是一个 Windows 桌面工具，用来查看 MAA 的计划任务、�
 
 | 路径 | 作用 |
 |---|---|
-| `app/` | Agent、Tk GUI、首次配置、日程、资源、公告和通知等运行代码。 |
+| `app/` | Agent、稳定版 Tk GUI，以及 `app/gui/` 下并行开发的 PySide6 2.0 GUI。 |
 | `tools/windows/` | Windows 辅助入口；根目录只保留日常启动器。 |
 | `tests/` | 自动回归测试。 |
 | `docs/` | 部署、操作、测试和历史说明。 |
@@ -66,7 +66,8 @@ Agent 是后台监控主体，GUI 是控制和观察界面。隐藏或关闭 GUI
 ## 实现习惯
 
 - 目标环境是 Windows 10/11 和 Python 3.11+。
-- Tk 仍是单 UI 线程；网络和耗时任务放到后台线程，再通过 `root.after` 更新界面。
+- 稳定版 Tk 仍是单 UI 线程；网络和耗时任务放到后台线程，再通过 `root.after` 更新界面。
+- PySide6 2.0 预览通过 `launcher.py --gui-v2` 或 `MAA_AGENT_GUI=v2` 单独启动；默认入口仍是稳定版 Tk。后台 `--maa-agent-background` 分支必须保持零 PySide6 导入。
 - 优先做边界清楚的小修改。需要重构时，先用测试固定现有行为。
 - 保持现有用户配置向后兼容；新增配置应提供安全、可理解的默认值。
 - 面向用户的文字尽量直接说明“发生了什么、会做什么”，少使用内部函数名和防御性话术。
@@ -88,6 +89,8 @@ Agent 是后台监控主体，GUI 是控制和观察界面。隐藏或关闭 GUI
 | `tests/test_v2_features.py` | GUI 格式、公告时间、首次配置和公开发布元数据。 |
 | `tests/test_gui_widgets.py` | 自定义 Tk 控件、颜色和滚轮。 |
 | `tests/test_news_center.py` | 公告缓存、增量读取、正文清理和维护监督。 |
+| `tests/test_z_gui_v2.py` | PySide6 Model/View、主题、懒加载、状态保留、离屏渲染与后台零导入。 |
+| `tests/test_z_resource_service.py` | 资源历史防抖、请求版本、签名缓存、LRU 与相邻日期预取。 |
 
 `tools/windows/test_all_notifications.bat` 和 `tools/diagnostics/test_bark.py` 会真实发送 Bark；`tools/diagnostics/test_ai.py` 会访问外部 AI API。它们只在明确需要验证对应通道时运行，不属于普通回归测试。
 

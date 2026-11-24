@@ -1,0 +1,381 @@
+from __future__ import annotations
+
+import json
+import os
+import shutil
+from datetime import date, datetime, timedelta
+from pathlib import Path
+
+from PySide6.QtCore import QObject, QRectF, QRunnable, QThreadPool, Qt, Signal, QSize
+from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtWidgets import (
+    QButtonGroup,
+    QHBoxLayout,
+    QLabel,
+    QListView,
+    QListWidget,
+    QListWidgetItem,
+    QFileDialog,
+    QInputDialog,
+    QMessageBox,
+    QPushButton,
+    QStackedWidget,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+from gui.components.resource_chart import ResourceChart
+from gui.models.resource_model import ResourceModel
+from gui.services.resource_service import ResourceService, ResourceSnapshot
+from gui.themes.tokens import DARK, LIGHT
+from project_paths import config_path
+from resource_history import memory_values
+from resource_whitelist import normalize_resource_whitelist
+
+
+class _ConfigSignals(QObject):
+    done = Signal(object)
+
+
+class _WhitelistWorker(QRunnable):
+    def __init__(self, base_dir: Path):
+        super().__init__()
+        self.base_dir = base_dir
+        self.signals = _ConfigSignals()
+
+    def run(self) -> None:
+        try:
+            value = json.loads(config_path(self.base_dir).read_text(encoding="utf-8-sig"))
+            rows = normalize_resource_whitelist(value)
+            start_hour = int(value.get("operational_day_start_hour", 4))
+        except Exception:
+            rows = []
+            start_hour = 4
+        self.signals.done.emit({"rows": tuple(dict(row) for row in rows), "start_hour": start_hour})
+
+
+class _WhitelistSaveSignals(QObject):
+    done = Signal(bool, str)
+
+
+class _WhitelistSaveWorker(QRunnable):
+    def __init__(self, base_dir: Path, rows: tuple[dict, ...]):
+        super().__init__()
+        self.base_dir = base_dir
+        self.rows = rows
+        self.signals = _WhitelistSaveSignals()
+
+    def run(self) -> None:
+        path = config_path(self.base_dir)
+        try:
+            value = json.loads(path.read_text(encoding="utf-8-sig"))
+            value["resource_whitelist"] = [dict(row) for row in self.rows]
+            path.parent.mkdir(parents=True, exist_ok=True)
+            backup = path.with_suffix(path.suffix + ".bak")
+            if path.exists():
+                shutil.copy2(path, backup)
+            temporary = path.with_suffix(path.suffix + ".tmp")
+            temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(temporary, path)
+            self.signals.done.emit(True, "资源白名单已保存；Agent 下一轮会自动读取。")
+        except Exception as exc:
+            self.signals.done.emit(False, str(exc))
+
+
+class _ResourceDelegate(QStyledItemDelegate):
+    def __init__(self, theme: str, parent=None):
+        super().__init__(parent)
+        self.theme = theme
+
+    def set_theme(self, theme: str) -> None:
+        self.theme = theme
+
+    def sizeHint(self, option, index) -> QSize:
+        return QSize(max(320, option.rect.width()), 82)
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
+        item = index.data(ResourceModel.ItemRole) or {}
+        tokens = DARK if self.theme == "dark" else LIGHT
+        rect = QRectF(option.rect).adjusted(8, 4, -8, -4)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(QPen(QColor(tokens.border), 1))
+        painter.setBrush(QColor(tokens.card))
+        painter.drawRoundedRect(rect, 9, 9)
+        when = datetime.fromtimestamp(float(item.get("epoch", 0)))
+        painter.setPen(QColor(tokens.warning))
+        painter.setFont(QFont("Segoe UI", 14, QFont.Weight.DemiBold))
+        painter.drawText(QRectF(rect.left() + 14, rect.top() + 8, 70, 28), Qt.AlignmentFlag.AlignVCenter, when.strftime("%H:%M"))
+        reasons = "；".join(item.get("abnormal_reasons") or ()) or f"内存 {item.get('ram', 0):.0f}%"
+        painter.setPen(QColor(tokens.text))
+        painter.setFont(QFont("Microsoft YaHei UI", 10, QFont.Weight.DemiBold))
+        painter.drawText(QRectF(rect.left() + 92, rect.top() + 7, rect.width() - 108, 26), Qt.AlignmentFlag.AlignVCenter, reasons)
+        used, available, _total = memory_values(item)
+        painter.setPen(QColor(tokens.muted))
+        painter.setFont(QFont("Microsoft YaHei UI", 9))
+        painter.drawText(QRectF(rect.left() + 92, rect.top() + 36, rect.width() - 108, 24), Qt.AlignmentFlag.AlignVCenter, f"已用 {used/1024:.1f} GB · 可用 {available/1024:.1f} GB · 双击查看详情")
+        painter.restore()
+
+
+class ResourcesPage(QWidget):
+    def __init__(self, base_dir: Path, page_state: dict, theme: str = "dark", parent=None):
+        super().__init__(parent)
+        self.base_dir = Path(base_dir)
+        self.page_state = page_state
+        stored = page_state.get("selected_day")
+        try:
+            self.selected_day = date.fromisoformat(stored) if stored else date.today()
+        except ValueError:
+            self.selected_day = date.today()
+        self.theme = theme
+        self.start_hour = 4
+        self.service = ResourceService(self.base_dir, parent=self)
+        self.service.loaded.connect(self._on_loaded)
+        self.service.failed.connect(self._on_failed)
+        self.model = ResourceModel(self)
+        self.delegate = _ResourceDelegate(theme, self)
+        self._whitelist_workers: set[_WhitelistWorker] = set()
+        self._whitelist_rows: list[dict] = []
+        self._whitelist_save_worker: _WhitelistSaveWorker | None = None
+        self._build_ui()
+        self._load_whitelist()
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(22, 20, 22, 20)
+        root.setSpacing(12)
+        header = QHBoxLayout()
+        title = QLabel("资源监控")
+        title.setObjectName("PageTitle")
+        header.addWidget(title)
+        header.addStretch(1)
+        segments = QButtonGroup(self)
+        segments.setExclusive(True)
+        history_button = QPushButton("历史趋势")
+        whitelist_button = QPushButton("资源白名单")
+        for index, button in enumerate((history_button, whitelist_button)):
+            button.setCheckable(True)
+            segments.addButton(button, index)
+            header.addWidget(button)
+        history_button.setChecked(True)
+        segments.idClicked.connect(self._switch_segment)
+        root.addLayout(header)
+        self.stack = QStackedWidget()
+        root.addWidget(self.stack, 1)
+        history = QWidget()
+        history_layout = QVBoxLayout(history)
+        history_layout.setContentsMargins(0, 0, 0, 0)
+        navigation = QHBoxLayout()
+        previous = QPushButton("‹ 前一天")
+        next_button = QPushButton("后一天 ›")
+        today = QPushButton("今天")
+        previous.clicked.connect(lambda: self.request_day(self.selected_day - timedelta(days=1)))
+        next_button.clicked.connect(lambda: self.request_day(self.selected_day + timedelta(days=1)))
+        today.clicked.connect(lambda: self.request_day(date.today()))
+        navigation.addWidget(previous)
+        navigation.addWidget(today)
+        navigation.addWidget(next_button)
+        navigation.addStretch(1)
+        self.day_label = QLabel()
+        navigation.addWidget(self.day_label)
+        history_layout.addLayout(navigation)
+        self.summary = QLabel("正在读取资源历史…")
+        self.summary.setObjectName("MutedLabel")
+        history_layout.addWidget(self.summary)
+        self.chart = ResourceChart(self.theme)
+        self.chart.snapshot_activated.connect(self._show_detail)
+        history_layout.addWidget(self.chart, 2)
+        anomaly_title = QLabel("异常采样")
+        anomaly_title.setStyleSheet("font-weight: 600;")
+        history_layout.addWidget(anomaly_title)
+        self.anomalies = QListView()
+        self.anomalies.setModel(self.model)
+        self.anomalies.setItemDelegate(self.delegate)
+        self.anomalies.setUniformItemSizes(True)
+        self.anomalies.setVerticalScrollMode(QListView.ScrollMode.ScrollPerPixel)
+        self.anomalies.doubleClicked.connect(lambda index: self._show_detail(self.model.item(index.row()) or {}))
+        history_layout.addWidget(self.anomalies, 1)
+        self.stack.addWidget(history)
+        whitelist = QWidget()
+        whitelist_layout = QVBoxLayout(whitelist)
+        whitelist_layout.setContentsMargins(0, 0, 0, 0)
+        note = QLabel("白名单程序的高占用视为预期负载；严重低内存仍会报警。")
+        note.setObjectName("MutedLabel")
+        whitelist_layout.addWidget(note)
+        whitelist_actions = QHBoxLayout()
+        self.whitelist_add = QPushButton("添加程序…")
+        self.whitelist_rename = QPushButton("修改名称")
+        self.whitelist_toggle = QPushButton("启用 / 停用")
+        self.whitelist_remove = QPushButton("删除")
+        self.whitelist_add.clicked.connect(self._add_whitelist)
+        self.whitelist_rename.clicked.connect(self._rename_whitelist)
+        self.whitelist_toggle.clicked.connect(self._toggle_whitelist)
+        self.whitelist_remove.clicked.connect(self._remove_whitelist)
+        for button in (self.whitelist_add, self.whitelist_rename, self.whitelist_toggle, self.whitelist_remove):
+            whitelist_actions.addWidget(button)
+        whitelist_actions.addStretch(1)
+        whitelist_layout.addLayout(whitelist_actions)
+        self.whitelist_status = QLabel("")
+        self.whitelist_status.setObjectName("MutedLabel")
+        whitelist_layout.addWidget(self.whitelist_status)
+        self.whitelist = QListWidget()
+        whitelist_layout.addWidget(self.whitelist, 1)
+        self.stack.addWidget(whitelist)
+        self._update_day_label()
+
+    def set_theme(self, theme: str) -> None:
+        self.theme = theme
+        self.chart.set_theme(theme)
+        self.delegate.set_theme(theme)
+        self._render_whitelist()
+        self.anomalies.viewport().update()
+
+    def _switch_segment(self, index: int) -> None:
+        self.stack.setCurrentIndex(index)
+        self.page_state["segment"] = index
+
+    def request_day(self, selected: date) -> None:
+        self.selected_day = selected
+        self.page_state["selected_day"] = selected.isoformat()
+        self._update_day_label()
+        self.summary.setText("正在读取资源历史…")
+        self.service.request_day(selected, self.start_hour)
+
+    def _update_day_label(self) -> None:
+        end = self.selected_day + timedelta(days=1)
+        self.day_label.setText(f"{self.selected_day:%Y-%m-%d 00:00} → {end:%m-%d 00:00}")
+
+    def _on_loaded(self, request_id: int, snapshot: ResourceSnapshot) -> None:
+        if snapshot.day != self.selected_day:
+            return
+        rows = snapshot.rows
+        self.chart.set_data(rows, snapshot.day)
+        self.model.set_rows(rows)
+        if rows:
+            ram = [float(row.get("ram", 0)) for row in rows]
+            used = [memory_values(row)[0] for row in rows]
+            abnormal = sum(bool(row.get("abnormal")) for row in rows)
+            cache_text = " · 缓存命中" if snapshot.from_cache else ""
+            self.summary.setText(f"采样 {len(rows)} 点 · 内存 {min(ram):.0f}%–{max(ram):.0f}% · 峰值已用 {max(used)/1024:.1f} GB · 异常 {abnormal}{cache_text}")
+        else:
+            self.summary.setText("这一天还没有资源采样。")
+
+    def _on_failed(self, request_id: int, message: str) -> None:
+        self.summary.setText(f"资源历史读取失败：{message}")
+
+    def _show_detail(self, row: dict) -> None:
+        if not row:
+            return
+        when = datetime.fromtimestamp(float(row.get("epoch", 0)))
+        apps = row.get("top_apps") or row.get("top_processes") or ()
+        lines = [f"{item.get('name', '进程')}  {float(item.get('mb', 0))/1024:.2f} GB" for item in apps]
+        QMessageBox.information(self, f"{when:%Y-%m-%d %H:%M} 资源详情", "\n".join(lines) or "没有进程明细。")
+
+    def _load_whitelist(self) -> None:
+        worker = _WhitelistWorker(self.base_dir)
+        self._whitelist_workers.add(worker)
+        worker.signals.done.connect(lambda rows, task=worker: self._show_whitelist(task, rows))
+        QThreadPool.globalInstance().start(worker)
+
+    def _show_whitelist(self, worker: _WhitelistWorker, payload) -> None:
+        self._whitelist_workers.discard(worker)
+        self.start_hour = int(payload.get("start_hour", 4))
+        self._whitelist_rows = [dict(row) for row in payload.get("rows", ())]
+        self._render_whitelist()
+        self.request_day(self.selected_day)
+
+    def _render_whitelist(self) -> None:
+        self.whitelist.clear()
+        if not self._whitelist_rows:
+            self.whitelist.addItem("尚未配置资源白名单")
+            return
+        for index, row in enumerate(self._whitelist_rows):
+            enabled = bool(row.get("enabled", True))
+            text = f"{'●' if enabled else '○'}  {row.get('name') or row.get('process_name') or '程序'}\n    {row.get('path') or row.get('process_name') or '未指定路径'}"
+            item = QListWidgetItem(text)
+            item.setData(Qt.ItemDataRole.UserRole, index)
+            if not enabled:
+                item.setForeground(QColor((DARK if self.theme == "dark" else LIGHT).disabled_text))
+            self.whitelist.addItem(item)
+
+    def _selected_whitelist_index(self) -> int | None:
+        item = self.whitelist.currentItem()
+        if item is None:
+            QMessageBox.information(self, "请选择程序", "请先选中一个白名单程序。")
+            return None
+        value = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(value, int) or not 0 <= value < len(self._whitelist_rows):
+            QMessageBox.information(self, "请选择程序", "请先选中一个白名单程序。")
+            return None
+        return value
+
+    def _add_whitelist(self) -> None:
+        path, _filter = QFileDialog.getOpenFileName(self, "选择要加入白名单的程序", "", "可执行文件 (*.exe);;所有文件 (*.*)")
+        if not path:
+            return
+        executable = Path(path)
+        identity = os.path.normcase(os.path.abspath(path))
+        if any(os.path.normcase(os.path.abspath(str(row.get("path") or ""))) == identity for row in self._whitelist_rows if row.get("path")):
+            QMessageBox.information(self, "已经存在", "这个程序已经在资源白名单中。")
+            return
+        self._whitelist_rows.append({"name": executable.stem, "process_name": executable.name, "path": str(executable), "enabled": True})
+        self._render_whitelist()
+        self.whitelist.setCurrentRow(len(self._whitelist_rows) - 1)
+        self._save_whitelist()
+
+    def _rename_whitelist(self) -> None:
+        index = self._selected_whitelist_index()
+        if index is None:
+            return
+        row = self._whitelist_rows[index]
+        value, accepted = QInputDialog.getText(self, "修改显示名称", "显示名称：", text=str(row.get("name") or ""))
+        if not accepted or not value.strip():
+            return
+        row["name"] = value.strip()
+        self._render_whitelist()
+        self.whitelist.setCurrentRow(index)
+        self._save_whitelist()
+
+    def _toggle_whitelist(self) -> None:
+        index = self._selected_whitelist_index()
+        if index is None:
+            return
+        self._whitelist_rows[index]["enabled"] = not bool(self._whitelist_rows[index].get("enabled", True))
+        self._render_whitelist()
+        self.whitelist.setCurrentRow(index)
+        self._save_whitelist()
+
+    def _remove_whitelist(self) -> None:
+        index = self._selected_whitelist_index()
+        if index is None:
+            return
+        row = self._whitelist_rows[index]
+        if QMessageBox.question(self, "删除白名单程序", f"确定删除“{row.get('name') or row.get('process_name')}”吗？") != QMessageBox.StandardButton.Yes:
+            return
+        self._whitelist_rows.pop(index)
+        self._render_whitelist()
+        self._save_whitelist()
+
+    def _save_whitelist(self) -> None:
+        if self._whitelist_save_worker is not None:
+            self.whitelist_status.setText("正在保存上一项更改，请稍候…")
+            return
+        self._set_whitelist_actions_enabled(False)
+        self.whitelist_status.setText("正在保存…")
+        worker = _WhitelistSaveWorker(self.base_dir, tuple(dict(row) for row in self._whitelist_rows))
+        self._whitelist_save_worker = worker
+        worker.signals.done.connect(self._whitelist_saved)
+        QThreadPool.globalInstance().start(worker)
+
+    def _whitelist_saved(self, ok: bool, message: str) -> None:
+        self._whitelist_save_worker = None
+        self._set_whitelist_actions_enabled(True)
+        self.whitelist_status.setText(message)
+        if not ok:
+            QMessageBox.warning(self, "白名单保存失败", message)
+
+    def _set_whitelist_actions_enabled(self, enabled: bool) -> None:
+        for button in (self.whitelist_add, self.whitelist_rename, self.whitelist_toggle, self.whitelist_remove):
+            button.setEnabled(enabled)
