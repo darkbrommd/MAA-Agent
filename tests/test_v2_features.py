@@ -118,6 +118,8 @@ class GuiFormattingTests(unittest.TestCase):
         self.assertNotIn("Manager and Monitor", build_script)
         release_script = (ROOT / "scripts" / "build_release.ps1").read_text(encoding="utf-8")
         self.assertIn("core.quotepath=false", release_script)
+        self.assertIn("$forbiddenRootDirectories", release_script)
+        self.assertIn("$item.Parent.FullName -eq $stageRoot", release_script)
 
     def test_shortcut_names_are_migrated_to_short_app_name(self):
         with tempfile.TemporaryDirectory() as td, patch.dict(

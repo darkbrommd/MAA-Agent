@@ -61,10 +61,14 @@ foreach ($relativePath in $releaseFiles) {
 Copy-Item -LiteralPath $exePath -Destination (Join-Path $stageRoot "MAA-Agent.exe")
 
 $forbiddenNames = @("config.json", "config.json.bak", "agent.log", "decision.log")
-$forbiddenDirectories = @(".git", ".venv", "state", "logs", "backups", "disabled_alerts", "__pycache__", "scripts")
+$forbiddenRootDirectories = @(".git", ".venv", "state", "logs", "backups", "disabled_alerts", "scripts")
+$forbiddenDirectories = @("__pycache__")
 foreach ($item in Get-ChildItem -LiteralPath $stageRoot -Recurse -Force) {
     if ($forbiddenNames -contains $item.Name) { throw "Forbidden release file: $($item.FullName)" }
-    if ($item.PSIsContainer -and $forbiddenDirectories -contains $item.Name) { throw "Forbidden release directory: $($item.FullName)" }
+    if (-not $item.PSIsContainer) { continue }
+    $isForbiddenAnywhere = $forbiddenDirectories -contains $item.Name
+    $isForbiddenAtRoot = ($item.Parent.FullName -eq $stageRoot) -and ($forbiddenRootDirectories -contains $item.Name)
+    if ($isForbiddenAnywhere -or $isForbiddenAtRoot) { throw "Forbidden release directory: $($item.FullName)" }
 }
 
 $secretPatterns = @('sk-[A-Za-z0-9_-]{16,}', 'github_pat_[A-Za-z0-9_]{20,}', 'ghp_[A-Za-z0-9]{20,}')
