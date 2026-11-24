@@ -19,15 +19,16 @@ APP_DIR = ROOT / "app"
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
-from PySide6.QtCore import QCoreApplication, QEventLoop, QRect, QThreadPool
-from PySide6.QtGui import QImage, QPainter
+from PySide6.QtCore import QCoreApplication, QEventLoop, QPoint, QPointF, QRect, QThreadPool, Qt
+from PySide6.QtGui import QImage, QPainter, QWheelEvent
 from PySide6.QtWidgets import QApplication
 
 from gui.components.resource_chart import ResourceChart
 from gui.components.timeline_delegate import compute_card_layout
 from gui.main_window import MainWindow
-from gui.models.schedule_model import ScheduleModel
+from gui.models.schedule_model import ScheduleModel, schedule_row_key
 from gui.pages.resources import _WhitelistSaveWorker
+from gui.pages.schedule import SchedulePage, _OverrideWorker
 from gui.services.process_service import _build_snapshot
 from gui.services.schedule_service import decorate_schedule_rows, occurrence_key
 from gui.state.refresh_manager import RefreshManager
@@ -49,8 +50,14 @@ class GuiV2Tests(unittest.TestCase):
         for theme in (DARK, LIGHT):
             self.assertTrue(theme.background.startswith("#"))
             self.assertTrue(theme.disabled_background.startswith("#"))
+            self.assertTrue(theme.running_card.startswith("#"))
+            self.assertTrue(theme.next_card.startswith("#"))
+            self.assertTrue(theme.ended_card.startswith("#"))
             stylesheet = load_stylesheet(theme.name)
             self.assertIn("QFrame#NavigationRail", stylesheet)
+            self.assertIn('QLabel#StatusPill[status="running"]', stylesheet)
+            self.assertIn("QListView::item:selected", stylesheet)
+            self.assertNotIn("QWidget {\n    background:", stylesheet)
             self.assertNotIn("{background}", stylesheet)
 
     def test_background_launcher_path_imports_no_pyside(self):
@@ -95,13 +102,21 @@ class GuiV2Tests(unittest.TestCase):
 
     def test_delegate_uses_one_shared_layout_for_error_hit_area(self):
         rect = QRect(0, 0, 920, 112)
-        layout = compute_card_layout(rect, {"state": "failed"})
+        layout = compute_card_layout(rect, {"state": "failed", "override": {"id": "one"}})
         self.assertFalse(layout.error_button.isEmpty())
+        self.assertFalse(layout.move_button.isEmpty())
+        self.assertFalse(layout.clear_button.isEmpty())
         self.assertTrue(layout.card.contains(layout.error_button.center()))
+        self.assertTrue(layout.card.contains(layout.toggle.center()))
+        self.assertTrue(layout.card.contains(layout.state_badge.center()))
         self.assertGreaterEqual(layout.error_button.left(), layout.status.right())
+        self.assertFalse(layout.error_button.intersects(layout.move_button))
+        self.assertFalse(layout.move_button.intersects(layout.clear_button))
         for scaled_width in (920, 1150, 1380):
-            scaled = compute_card_layout(QRect(0, 0, scaled_width, 140), {"state": "failed"})
+            scaled = compute_card_layout(QRect(0, 0, scaled_width, 140), {"state": "failed", "override": {"id": "one"}})
             self.assertTrue(scaled.card.contains(scaled.error_button.center()))
+            self.assertTrue(scaled.card.contains(scaled.move_button.center()))
+            self.assertTrue(scaled.card.contains(scaled.clear_button.center()))
             self.assertGreater(scaled.title.width(), 0)
 
     def test_schedule_model_replaces_rows_atomically(self):
@@ -111,6 +126,150 @@ class GuiV2Tests(unittest.TestCase):
         self.assertEqual(model.item(0)["label"], "MAA1")
         model.set_rows(())
         self.assertEqual(model.rowCount(), 0)
+
+    def test_schedule_model_extends_edges_without_reset(self):
+        model = ScheduleModel()
+        base = datetime(2026, 11, 24, 8, 0)
+
+        def row(offset: int) -> dict:
+            when = base + timedelta(hours=offset)
+            return {"label": "MAA1", "datetime": when, "original_datetime": when, "state": "future"}
+
+        model.set_rows((row(0), row(1)))
+        resets = []
+        inserts = []
+        model.modelReset.connect(lambda: resets.append(True))
+        model.rowsInserted.connect(lambda _parent, first, last: inserts.append((first, last)))
+        self.assertEqual(model.sync_rows((row(0), row(1), row(2))), "append")
+        self.assertEqual(model.sync_rows((row(-1), row(0), row(1), row(2))), "prepend")
+        self.assertEqual(resets, [])
+        self.assertEqual(inserts, [(2, 2), (0, 0)])
+        self.assertEqual(model.rowCount(), 4)
+        self.assertEqual(model.item(0)["datetime"], base - timedelta(hours=1))
+        duplicate_a = {**row(3), "timer_id": 1, "config": "A"}
+        duplicate_b = {**row(3), "timer_id": 2, "config": "B"}
+        self.assertNotEqual(schedule_row_key(duplicate_a), schedule_row_key(duplicate_b))
+
+    def test_schedule_page_keeps_scroll_anchor_when_window_grows(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base_dir = Path(temporary)
+            (base_dir / "config").mkdir(parents=True)
+            (base_dir / "state").mkdir()
+            (base_dir / "config" / "config.json").write_text(
+                json.dumps({"maa_schedule": {}, "maa_instance_dirs": {}}), encoding="utf-8"
+            )
+            page = SchedulePage(base_dir, {})
+            QThreadPool.globalInstance().waitForDone(3000)
+            process_events(80)
+            base = datetime(2026, 11, 24)
+
+            def row(offset: int) -> dict:
+                when = base + timedelta(hours=offset)
+                return {
+                    "label": "MAA1",
+                    "datetime": when,
+                    "original_datetime": when,
+                    "config": "任务",
+                    "state": "future",
+                    "status_title": "等待运行",
+                    "status_detail": "已加入后续监测",
+                    "skipped": False,
+                    "override": None,
+                }
+
+            original = tuple(row(offset) for offset in range(16))
+            page.model.set_rows(original)
+            page.resize(900, 420)
+            page.show()
+            process_events(120)
+            bar = page.list_view.verticalScrollBar()
+            bar.setValue(bar.maximum())
+            process_events(40)
+            page._capture_view_anchor()
+            old_value = page._preserve_scroll_value
+            update_kind = page.model.sync_rows(original + tuple(row(offset) for offset in range(16, 20)))
+            process_events(40)
+            page._restore_after_update(update_kind, "extend_down")
+            self.assertEqual(update_kind, "append")
+            self.assertEqual(bar.value(), old_value)
+
+            bar.setValue(max(bar.minimum(), bar.value() // 2))
+            process_events(40)
+            page._capture_view_anchor()
+            anchor = page._preserve_key
+            prepended = tuple(row(offset) for offset in range(-4, 0)) + page.model.rows()
+            update_kind = page.model.sync_rows(prepended)
+            process_events(40)
+            page._restore_after_update(update_kind, "extend_up")
+            process_events(40)
+            top_index = page.list_view.indexAt(QPoint(12, 12))
+            self.assertEqual(update_kind, "prepend")
+            self.assertTrue(top_index.isValid())
+            self.assertEqual(schedule_row_key(page.model.item(top_index.row())), anchor)
+            self.assertEqual(page._override_pool.maxThreadCount(), 1)
+            page.close()
+
+    def test_wheel_at_existing_bottom_starts_one_extension_and_reset_unlocks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base_dir = Path(temporary)
+            (base_dir / "config").mkdir(parents=True)
+            (base_dir / "state").mkdir()
+            (base_dir / "config" / "config.json").write_text(
+                json.dumps({"maa_schedule": {}, "maa_instance_dirs": {}}), encoding="utf-8"
+            )
+            page = SchedulePage(base_dir, {})
+            QThreadPool.globalInstance().waitForDone(3000)
+            process_events(80)
+            page._loading = False
+            old_end = page.window_end
+            event = QWheelEvent(
+                QPointF(20, 20),
+                QPointF(20, 20),
+                QPoint(),
+                QPoint(0, -120),
+                Qt.MouseButton.NoButton,
+                Qt.KeyboardModifier.NoModifier,
+                Qt.ScrollPhase.NoScrollPhase,
+                False,
+            )
+            QApplication.sendEvent(page.list_view.viewport(), event)
+            self.assertEqual(page.window_end, old_end + timedelta(days=2))
+            self.assertTrue(page._wheel_blocked)
+            selected = page.selected_day + timedelta(days=1)
+            page.set_day(selected)
+            self.assertFalse(page._wheel_blocked)
+            context = page._request_contexts[page._active_request_id]
+            self.assertEqual(context["mode"], "reset")
+            QThreadPool.globalInstance().waitForDone(3000)
+            process_events(80)
+            page.close()
+
+    def test_schedule_card_toggle_worker_only_changes_supervision_override(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base_dir = Path(temporary)
+            (base_dir / "config").mkdir(parents=True)
+            (base_dir / "state").mkdir()
+            (base_dir / "config" / "config.json").write_text(
+                json.dumps({"schedule_override_file": "state/schedule_overrides.json"}), encoding="utf-8"
+            )
+            when = datetime(2026, 11, 25, 8, 0)
+            item = {"label": "MAA1", "datetime": when, "original_datetime": when}
+            _OverrideWorker(base_dir, item, "skip", None).run()
+            override_path = base_dir / "state" / "schedule_overrides.json"
+            saved = json.loads(override_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["overrides"][0]["action"], "skip")
+            stale_override = saved["overrides"][0]
+            _OverrideWorker(base_dir, item, "move", when + timedelta(hours=1)).run()
+            replaced = json.loads(override_path.read_text(encoding="utf-8"))["overrides"][0]
+            self.assertNotEqual(replaced["id"], stale_override["id"])
+            _OverrideWorker(base_dir, {**item, "override": stale_override}, "clear", None).run()
+            cleared = json.loads(override_path.read_text(encoding="utf-8"))
+            self.assertEqual(cleared["overrides"], [])
+            messages = []
+            missing = _OverrideWorker(base_dir, {**item, "override": stale_override}, "clear", None)
+            missing.signals.done.connect(messages.append)
+            missing.run()
+            self.assertIn("已不存在", messages[0])
 
     def test_refresh_manager_runs_only_visible_active_page(self):
         manager = RefreshManager()

@@ -18,6 +18,9 @@ class ThemeTokens:
     warning: str
     danger: str
     failure_card: str
+    running_card: str
+    next_card: str
+    ended_card: str
     ended: str
     disabled_text: str
     disabled_background: str
@@ -39,6 +42,9 @@ DARK = ThemeTokens(
     warning="#E3B341",
     danger="#EF6868",
     failure_card="#3A1E22",
+    running_card="#3B3420",
+    next_card="#203A2A",
+    ended_card="#252D36",
     ended="#6E7681",
     disabled_text="#5C6573",
     disabled_background="#161B22",
@@ -57,6 +63,9 @@ LIGHT = ThemeTokens(
     warning="#C58308",
     danger="#D64545",
     failure_card="#FCEBEB",
+    running_card="#FFF1C2",
+    next_card="#DFF3E5",
+    ended_card="#E3E8ED",
     ended="#8C96A5",
     disabled_text="#9AA4B2",
     disabled_background="#EEF1F5",

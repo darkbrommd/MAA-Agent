@@ -9,7 +9,7 @@ if __package__ in {None, ""}:
     if str(app_dir) not in sys.path:
         sys.path.insert(0, str(app_dir))
 
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import QApplication
 
 from gui.main_window import MainWindow
@@ -26,6 +26,7 @@ def main() -> int:
     application = QApplication.instance() or QApplication(sys.argv)
     application.setApplicationName("MAA Agent")
     application.setOrganizationName("Taylor Yu")
+    application.setFont(QFont("Microsoft YaHei UI", 10))
     base_dir = project_root()
     icon_path = base_dir / "assets" / "app_icon.ico"
     if icon_path.exists():
