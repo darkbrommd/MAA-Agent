@@ -19,6 +19,12 @@ from PySide6.QtWidgets import (
 from gui.services.log_service import LogChunk, LogService, line_matches
 
 
+LOG_LABELS = {
+    "agent.log": "运行日志（agent.log）",
+    "decision.log": "决策日志（decision.log）",
+}
+
+
 class LogsPage(QWidget):
     def __init__(self, base_dir: Path, page_state: dict, theme: str = "dark", parent=None):
         super().__init__(parent)
@@ -40,9 +46,11 @@ class LogsPage(QWidget):
         root.addWidget(title)
         tools = QHBoxLayout()
         self.file = QComboBox()
-        self.file.addItems(("agent.log", "decision.log"))
-        self.file.setCurrentText(str(self.page_state.get("file") or "agent.log"))
-        self.file.currentTextChanged.connect(self._change_file)
+        for filename, label in LOG_LABELS.items():
+            self.file.addItem(label, filename)
+        stored_file = str(self.page_state.get("file") or "agent.log")
+        self.file.setCurrentIndex(max(0, self.file.findData(stored_file)))
+        self.file.currentIndexChanged.connect(self._change_file)
         self.mode = QComboBox()
         self.mode.addItems(("全部", "错误与警告", "事故与恢复"))
         self.mode.setCurrentText(str(self.page_state.get("mode") or "全部"))
@@ -83,33 +91,38 @@ class LogsPage(QWidget):
         self.refresh()
 
     def refresh(self) -> None:
-        self.service.request(self.file.currentText())
+        self.service.request(self._current_filename())
 
     def _apply_chunk(self, chunk: LogChunk) -> None:
         lines = chunk.text.splitlines()
         stored = self._raw.setdefault(chunk.filename, [])
         if chunk.reset:
             stored[:] = lines[-5000:]
-            if chunk.filename == self.file.currentText():
+            if chunk.filename == self._current_filename():
                 self._render()
         elif lines:
             stored.extend(lines)
             del stored[:-5000]
-            if chunk.filename == self.file.currentText():
+            if chunk.filename == self._current_filename():
                 for line in lines:
                     if line_matches(line, self.mode.currentText(), self.search.text().strip()):
                         self.view.appendPlainText(line)
                 self._scroll_if_following()
-        self.status.setText(f"{chunk.filename} · 已读到 {chunk.offset:,} 字节" if chunk.exists else f"{chunk.filename} 尚不存在")
+        label = LOG_LABELS.get(chunk.filename, chunk.filename)
+        self.status.setText(f"{label} · 已读到 {chunk.offset:,} 字节" if chunk.exists else f"{label} 尚不存在")
 
     def _render(self, *_args) -> None:
         mode = self.mode.currentText()
         query = self.search.text().strip()
-        values = [line for line in self._raw.get(self.file.currentText(), ()) if line_matches(line, mode, query)]
+        values = [line for line in self._raw.get(self._current_filename(), ()) if line_matches(line, mode, query)]
         self.view.setPlainText("\n".join(values[-5000:]))
         self._scroll_if_following()
 
-    def _change_file(self, filename: str) -> None:
+    def _current_filename(self) -> str:
+        return str(self.file.currentData() or "agent.log")
+
+    def _change_file(self, _index: int) -> None:
+        filename = self._current_filename()
         self.page_state["file"] = filename
         self._render()
         self.refresh()
@@ -138,7 +151,7 @@ class LogsPage(QWidget):
         QApplication.clipboard().setText(cursor.selectedText() if cursor.hasSelection() else self.view.toPlainText())
 
     def _open(self) -> None:
-        path = self.base_dir / "logs" / self.file.currentText()
+        path = self.base_dir / "logs" / self._current_filename()
         if path.exists():
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
         else:

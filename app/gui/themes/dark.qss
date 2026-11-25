@@ -1,7 +1,7 @@
 QWidget {{
     color: {text};
     font-family: "Microsoft YaHei UI", "Segoe UI";
-    font-size: 13px;
+    font-size: 14px;
 }}
 QMainWindow, QDialog, QWidget#AppRoot, QWidget#ContentArea, QStackedWidget {{ background: {background}; }}
 QFrame#NavigationRail {{ background: {navigation}; border-right: 1px solid {border}; }}
@@ -24,11 +24,11 @@ QPushButton:pressed, QToolButton:pressed {{ background: {disabled_background}; }
 QPushButton:checked, QToolButton:checked {{ background: {disabled_background}; border-color: {accent}; }}
 QPushButton:disabled, QToolButton:disabled {{ color: {disabled_text}; background: {disabled_background}; }}
 QPushButton#PrimaryButton {{ background: {accent}; color: white; border-color: {accent}; }}
-QPushButton#NavButton {{ text-align: left; padding: 9px 12px; border-color: transparent; background: transparent; font-size: 14px; }}
+QPushButton#NavButton {{ text-align: left; padding: 9px 12px; border-color: transparent; background: transparent; font-size: 15px; }}
 QPushButton#NavButton:checked {{ background: {card}; color: {accent}; border-color: {border}; }}
 QPushButton#NavButton[compact="true"] {{ text-align: center; padding: 9px 0; }}
 QLabel#MutedLabel {{ color: {muted}; }}
-QLabel#SectionLabel {{ color: {muted}; font-size: 11px; font-weight: 600; }}
+QLabel#SectionLabel {{ color: {muted}; font-size: 13px; font-weight: 600; }}
 QLabel#PageTitle {{ font-size: 22px; font-weight: 700; }}
 QLabel#StatusPill {{ background: {card}; border: 1px solid {border}; border-radius: 12px; padding: 4px 9px; }}
 QLabel#StatusPill[status="running"] {{ background: {next_card}; color: {success}; border-color: {success}; }}
@@ -52,4 +52,6 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
 QSplitter::handle {{ background: transparent; }}
 QSplitter::handle:vertical {{ border-top: 1px solid {border}; margin: 2px 0; }}
 QSplitter::handle:hover {{ background: {accent}; }}
+QFrame#ScheduleDayLine {{ color: {border}; background: {border}; max-height: 1px; border: 0; }}
+QPlainTextEdit {{ font-family: "Cascadia Mono", "Consolas"; font-size: 13px; }}
 QToolTip {{ background: {card}; color: {text}; border: 1px solid {border}; padding: 5px; }}

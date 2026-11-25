@@ -144,7 +144,9 @@ class MainWindow(QMainWindow):
                 page.update_process_snapshot(self._latest_process_snapshot)
             return page
         if key == "schedule":
-            return SchedulePage(self.base_dir, self.app_state.page_state(key), self._theme)
+            page = SchedulePage(self.base_dir, self.app_state.page_state(key), self._theme)
+            self.refresh_manager.register("schedule", 5000, page.refresh_tick)
+            return page
         if key == "resources":
             return ResourcesPage(self.base_dir, self.app_state.page_state(key), self._theme)
         if key == "news":

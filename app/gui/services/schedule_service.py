@@ -44,6 +44,7 @@ def decorate_schedule_rows(
     daily_states: dict[date, dict],
     alerted_keys: set[str],
     now: datetime,
+    grace_minutes: float = 15.0,
 ) -> tuple[dict, ...]:
     future_candidates = []
     for row in rows:
@@ -103,7 +104,11 @@ def decorate_schedule_rows(
             elif any(expected in str(item) and str(row["label"]) in str(item) for item in (daily.get("schedule") or {}).get("unverified", [])):
                 state, title, detail = "off", "无法核验", "当时 Agent 尚未覆盖该监测时段"
             elif when <= now:
-                state, title, detail = "off", "等待核验", "尚未收到本次启动证据"
+                delay = now - when
+                if delay <= timedelta(minutes=max(0.0, float(grace_minutes))):
+                    state, title, detail = "running", "等待启动确认", "计划已到点，等待 Agent 检测启动"
+                else:
+                    state, title, detail = "off", "等待核验", "尚未收到本次启动证据"
             elif next_time is not None and when == next_time:
                 state, title, detail = "next", "下一个计划", "即将执行"
         row.update(state=state, status_title=title, status_detail=detail, error=error)
@@ -143,7 +148,14 @@ class _ScheduleWorker(QRunnable):
                 digest = hashlib.sha1(f"{row['label']}|{expected}".encode("utf-8", errors="ignore")).hexdigest()
                 if (state_dir / f"scheduled_alert_{digest}.txt").exists():
                     alerted.add(occurrence_key(str(row["label"]), row["datetime"]))
-            decorated = decorate_schedule_rows(rows, run_records, daily_states, alerted, datetime.now())
+            decorated = decorate_schedule_rows(
+                rows,
+                run_records,
+                daily_states,
+                alerted,
+                datetime.now(),
+                float(cfg.get("scheduled_run_grace_minutes", 15) or 15),
+            )
             aliases = {str(key): str(value).strip() for key, value in (cfg.get("maa_instance_aliases") or {}).items()}
             for row in decorated:
                 label = str(row.get("label") or "")

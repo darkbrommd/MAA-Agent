@@ -32,11 +32,12 @@ from gui.main_window import MainWindow
 from gui.models.news_model import NewsModel
 from gui.pages.dashboard import DashboardPage
 from gui.pages.news import NewsPage
+from gui.pages.logs import LogsPage
 from gui.models.schedule_model import ScheduleModel, schedule_row_key
 from gui.pages.resources import _WhitelistSaveWorker
 from gui.pages.schedule import SchedulePage, _OverrideWorker
 from gui.resource_paths import resource_path
-from gui.services.dashboard_service import dashboard_source_signature
+from gui.services.dashboard_service import DashboardSnapshot, dashboard_source_signature, load_dashboard_snapshot
 from gui.services import agent_control_service
 from gui.services.log_service import line_matches, read_log_chunk
 from gui.services.news_service import NewsSnapshot
@@ -135,6 +136,15 @@ class GuiV2Tests(unittest.TestCase):
         self.assertEqual(decorated[0]["status_detail"], "任务失败")
         self.assertEqual([row["state"] for row in decorated].count("next"), 1)
         self.assertEqual(decorated[1]["state"], "next")
+
+    def test_due_schedule_waits_for_start_evidence_during_grace(self):
+        now = datetime(2026, 11, 26, 4, 5)
+        due = {"label": "MAA1", "datetime": now - timedelta(minutes=5), "config": "A", "skipped": False}
+        decorated = decorate_schedule_rows([due], {}, {}, set(), now, grace_minutes=15)
+        self.assertEqual(decorated[0]["state"], "running")
+        self.assertEqual(decorated[0]["status_title"], "等待启动确认")
+        expired = decorate_schedule_rows([due], {}, {}, set(), now + timedelta(minutes=16), grace_minutes=15)
+        self.assertEqual(expired[0]["state"], "off")
 
     def test_schedule_run_records_accepts_current_and_legacy_shapes(self):
         current = {"runs": {"MAA1|2026-11-25 08:00": {"status": "failed"}}, "version": 2}
@@ -408,6 +418,24 @@ class GuiV2Tests(unittest.TestCase):
         self.assertEqual([item.pid for item in snapshot.top_processes], [12, 13, 11])
         self.assertGreaterEqual(snapshot.disk_total_gb, 0)
 
+    def test_process_snapshot_groups_apps_but_keeps_maa_instances_separate(self):
+        cfg = {
+            "maa_instance_dirs": {"MAA1": "D:/MAA/one", "MAA2": "D:/MAA/two"},
+            "maa_instance_aliases": {"MAA1": "主号", "MAA2": "副号"},
+        }
+        rows = [
+            {"pid": index, "name": "ChatGPT.exe", "exe": "C:/ChatGPT/ChatGPT.exe", "memory": 500 * 1048576, "cmdline": ()}
+            for index in (1, 2, 3)
+        ] + [
+            {"pid": 11, "name": "MAA.exe", "exe": "D:/MAA/one/MAA.exe", "memory": 900 * 1048576, "cmdline": ()},
+            {"pid": 12, "name": "MAA.exe", "exe": "D:/MAA/two/MAA.exe", "memory": 800 * 1048576, "cmdline": ()},
+        ]
+        snapshot = _build_snapshot(cfg, rows)
+        self.assertEqual(snapshot.top_processes[0].name, "ChatGPT.exe")
+        self.assertEqual(snapshot.top_processes[0].process_count, 3)
+        self.assertEqual(snapshot.top_processes[0].memory_mb, 1500)
+        self.assertEqual({item.name for item in snapshot.top_processes[1:]}, {"主号（MAA1）", "副号（MAA2）"})
+
     def test_agent_control_refuses_duplicate_for_same_installation(self):
         with tempfile.TemporaryDirectory() as temporary, \
                 patch.object(agent_control_service, "validated_agent_for_dir", return_value={"pid": 321}), \
@@ -526,6 +554,44 @@ class GuiV2Tests(unittest.TestCase):
             self.assertIn("log_cutoff", state)
             self.assertEqual(path.read_text(encoding="utf-8"), original)
             self.assertEqual(page.log_view.toPlainText(), "")
+            page.close()
+
+    def test_dashboard_schedule_uses_day_header_and_fixed_height_cards(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            page = DashboardPage(Path(temporary), {})
+            when = datetime(2026, 11, 26, 4, 0)
+            rows = (
+                {"label": "MAA1", "display_label": "主号（MAA1）", "datetime": when, "state": "running", "status_title": "正在进行", "status_detail": "当前：任务队列", "show_date_header": True},
+                {"label": "MAA2", "display_label": "副号（MAA2）", "datetime": when + timedelta(hours=2), "state": "future", "status_title": "等待运行", "status_detail": "已加入后续监测", "show_date_header": False},
+            )
+            page._apply_dashboard(DashboardSnapshot(rows, (), when.date()))
+            self.assertEqual(page.schedule_list.count(), 3)
+            self.assertEqual(page.schedule_list.item(0).sizeHint().height(), 34)
+            self.assertEqual(page.schedule_list.item(1).sizeHint().height(), 88)
+            page.close()
+
+    def test_dashboard_snapshot_keeps_recently_due_occurrence(self):
+        now = datetime(2026, 11, 26, 4, 5)
+        due_time = datetime(2026, 11, 26, 4, 0)
+        due = {"label": "MAA1", "datetime": due_time, "original_datetime": due_time, "config": "A", "skipped": False}
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            (base / "config").mkdir()
+            (base / "config" / "config.json").write_text("{}", encoding="utf-8")
+            with patch("gui.services.dashboard_service.effective_occurrences", return_value=([due], {})) as occurrences, \
+                    patch("gui.services.dashboard_service.resource_history.load_calendar_day", return_value=[]):
+                snapshot = load_dashboard_snapshot(base, now)
+        self.assertEqual(snapshot.schedule_rows[0]["status_title"], "等待启动确认")
+        self.assertEqual(occurrences.call_args.args[2], now - timedelta(hours=2))
+
+    def test_logs_page_uses_user_facing_names_without_changing_filenames(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            page = LogsPage(Path(temporary), {"file": "decision.log"})
+            self.assertEqual(page.file.currentText(), "决策日志（decision.log）")
+            self.assertEqual(page._current_filename(), "decision.log")
+            page.file.setCurrentIndex(page.file.findData("agent.log"))
+            self.assertEqual(page.page_state["file"], "agent.log")
+            QThreadPool.globalInstance().waitForDone(3000)
             page.close()
 
     def test_dashboard_signature_changes_only_when_sources_change(self):

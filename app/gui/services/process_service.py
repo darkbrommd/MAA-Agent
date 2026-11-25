@@ -23,6 +23,7 @@ class ProcessMemoryState:
     name: str
     pid: int
     memory_mb: float
+    process_count: int = 1
 
 
 @dataclass(frozen=True)
@@ -93,19 +94,36 @@ def _build_snapshot(cfg: dict, rows: list[dict], disk_path: Path | None = None) 
     agent_pid = None
     mumu_count = 0
     mumu_memory = 0
+    memory_groups: dict[str, dict] = {}
     for row in rows:
         name = row["name"].lower()
         command = " ".join(row["cmdline"]).lower()
-        if agent_pid is None and ((name == "maa-agent.exe" and "--maa-agent-background" in command) or (name.startswith("python") and "agent.py" in command)):
+        is_agent = (name == "maa-agent.exe" and "--maa-agent-background" in command) or (name.startswith("python") and "agent.py" in command)
+        if agent_pid is None and is_agent:
             agent_pid = row["pid"]
+        group_key = f"app:{name}"
+        group_name = str(row.get("name") or f"PID {row.get('pid', '?')}")
+        matched_instance = ""
         if name == "maa.exe":
             for label, directory in instance_dirs.items():
                 if _path_is_below(row["exe"], directory):
                     instance_pids[label].append(row["pid"])
+                    matched_instance = label
                     break
-        if name in mumu_names or name.startswith(("mumu", "nemu")):
+        is_mumu = name in mumu_names or name.startswith(("mumu", "nemu"))
+        if is_mumu:
             mumu_count += 1
             mumu_memory += row["memory"]
+        if matched_instance:
+            group_key = f"maa:{matched_instance}"
+            group_name = f"{aliases[matched_instance]}（{matched_instance}）" if aliases.get(matched_instance) else matched_instance
+        elif is_mumu:
+            group_key, group_name = "mumu", "MuMu"
+        elif is_agent:
+            group_key, group_name = "maa-agent", "MAA Agent"
+        group = memory_groups.setdefault(group_key, {"name": group_name, "memory": 0, "count": 0, "pid": row["pid"]})
+        group["memory"] += int(row.get("memory") or 0)
+        group["count"] += 1
     vm = psutil.virtual_memory()
     try:
         disk = psutil.disk_usage(str(disk_path or Path.cwd()))
@@ -116,11 +134,12 @@ def _build_snapshot(cfg: dict, rows: list[dict], disk_path: Path | None = None) 
         disk_percent = disk_used_gb = disk_total_gb = 0.0
     top_processes = tuple(
         ProcessMemoryState(
-            str(row.get("name") or f"PID {row.get('pid', '?')}"),
-            int(row.get("pid") or 0),
-            float(row.get("memory") or 0) / 1048576,
+            str(group["name"]),
+            int(group["pid"]),
+            float(group["memory"]) / 1048576,
+            int(group["count"]),
         )
-        for row in sorted(rows, key=lambda item: int(item.get("memory") or 0), reverse=True)[:3]
+        for group in sorted(memory_groups.values(), key=lambda item: int(item["memory"]), reverse=True)[:3]
     )
     return ProcessSnapshot(
         cpu_percent=float(psutil.cpu_percent(interval=None)),

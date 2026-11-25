@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSplitter,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -26,6 +27,7 @@ from gui.components.resource_chart import ResourceChart
 from gui.services.dashboard_service import DashboardService, DashboardSnapshot
 from gui.services.log_service import LogChunk, LogService, line_matches
 from gui.services.process_service import ProcessSnapshot
+from gui.themes.tokens import DARK, LIGHT
 from project_paths import config_path
 from schedule_utils import add_override, remove_override
 
@@ -40,7 +42,7 @@ class _OverviewProcessCard(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 11, 14, 11)
         layout.setSpacing(4)
-        heading = QLabel(f"内存占用 #{rank}")
+        heading = QLabel(f"应用内存 #{rank}")
         heading.setObjectName("MutedLabel")
         layout.addWidget(heading)
         self.name = QLabel("读取中…")
@@ -56,7 +58,9 @@ class _OverviewProcessCard(QFrame):
             self.value.setText("—")
             return
         self.name.setText(process.name)
-        self.value.setText(f"{process.memory_mb / 1024:.2f} GB · PID {process.pid}" if process.memory_mb >= 1024 else f"{process.memory_mb:.0f} MB · PID {process.pid}")
+        memory = f"{process.memory_mb / 1024:.2f} GB" if process.memory_mb >= 1024 else f"{process.memory_mb:.0f} MB"
+        suffix = f"{process.process_count} 个进程" if process.process_count > 1 else f"PID {process.pid}"
+        self.value.setText(f"{memory} · {suffix}")
 
 
 class _DashboardOverrideSignals(QObject):
@@ -110,6 +114,7 @@ class DashboardPage(QWidget):
         self._theme = theme
         self._last_static_refresh = 0.0
         self._log_lines: list[str] = []
+        self._schedule_rows: tuple[dict, ...] = ()
         self._override_workers: set[_DashboardOverrideWorker] = set()
         self._build_ui()
         self.dashboard_service = DashboardService(self.base_dir, parent=self)
@@ -147,6 +152,7 @@ class DashboardPage(QWidget):
         self.main_splitter.setChildrenCollapsible(False)
         plans = QFrame()
         plans.setObjectName("Card")
+        plans.setMinimumWidth(380)
         plans_layout = QVBoxLayout(plans)
         plans_layout.setContentsMargins(14, 14, 14, 14)
         plans_header = QHBoxLayout()
@@ -159,6 +165,8 @@ class DashboardPage(QWidget):
         plans_layout.addLayout(plans_header)
         self.schedule_list = QListWidget()
         self.schedule_list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.schedule_list.setSelectionMode(QListWidget.SelectionMode.NoSelection)
+        self.schedule_list.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
         self.schedule_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         plans_layout.addWidget(self.schedule_list, 1)
 
@@ -193,6 +201,7 @@ class DashboardPage(QWidget):
         self.log_view.setReadOnly(True)
         self.log_view.setMaximumBlockCount(1200)
         self.log_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.log_view.setPlaceholderText("暂时没有事故或恢复事件；Agent 的正常运行不会在这里刷屏。")
         self.activity_splitter.addWidget(self.chart)
         self.activity_splitter.addWidget(self.log_view)
         activity_layout.addWidget(self.activity_splitter, 1)
@@ -226,33 +235,103 @@ class DashboardPage(QWidget):
             card.set_process(snapshot.top_processes[index] if index < len(snapshot.top_processes) else None)
 
     def _apply_dashboard(self, snapshot: DashboardSnapshot) -> None:
-        self.schedule_list.clear()
-        for row in snapshot.schedule_rows:
-            when = row.get("datetime")
-            time_text = when.strftime("%m-%d %H:%M") if isinstance(when, datetime) else str(when or "")
-            item = QListWidgetItem()
-            item.setData(Qt.ItemDataRole.UserRole, row)
-            item.setSizeHint(QSize(1, 72))
-            self.schedule_list.addItem(item)
-            widget = QWidget()
-            layout = QHBoxLayout(widget)
-            layout.setContentsMargins(8, 5, 8, 5)
-            text = QLabel(
-                f"{time_text}  {row.get('display_label') or row.get('label', '')}\n"
-                f"{row.get('status_title', '')} · {row.get('status_detail', '')}"
-            )
-            text.setWordWrap(True)
-            layout.addWidget(text, 1)
-            toggle = QPushButton("恢复监测" if row.get("skipped") else "关闭本次")
-            toggle.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            toggle.setToolTip("只调整 Agent 对这一次计划的监督预期，不修改 MAA 定时器。")
-            toggle.clicked.connect(lambda _checked=False, value=dict(row), button=toggle: self._toggle_plan(value, button))
-            layout.addWidget(toggle)
-            self.schedule_list.setItemWidget(item, widget)
-        if not snapshot.schedule_rows:
-            self.schedule_list.addItem("未来 36 小时没有计划")
+        self._schedule_rows = tuple(dict(row) for row in snapshot.schedule_rows)
+        self._render_schedule_rows()
         self.chart.set_data(snapshot.resource_rows, snapshot.day)
         self.status_label.setText(f"已更新 · {datetime.now():%H:%M:%S}")
+
+    def _render_schedule_rows(self) -> None:
+        self.schedule_list.clear()
+        for row in self._schedule_rows:
+            if row.get("show_date_header"):
+                self._add_schedule_day_header(row)
+            self._add_schedule_card(row)
+        if not self._schedule_rows:
+            item = QListWidgetItem()
+            item.setSizeHint(QSize(1, 54))
+            self.schedule_list.addItem(item)
+            empty = QLabel("未来 36 小时没有计划")
+            empty.setObjectName("MutedLabel")
+            empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.schedule_list.setItemWidget(item, empty)
+
+    def _add_schedule_day_header(self, row: dict) -> None:
+        when = row.get("datetime")
+        if not isinstance(when, datetime):
+            return
+        item = QListWidgetItem()
+        item.setSizeHint(QSize(1, 34))
+        self.schedule_list.addItem(item)
+        header = QWidget()
+        layout = QHBoxLayout(header)
+        layout.setContentsMargins(8, 2, 8, 0)
+        label = QLabel(f"{when:%Y年%m月%d日} · 星期{'一二三四五六日'[when.weekday()]}")
+        label.setStyleSheet("font-weight: 600;")
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setObjectName("ScheduleDayLine")
+        layout.addWidget(label)
+        layout.addWidget(line, 1)
+        self.schedule_list.setItemWidget(item, header)
+
+    def _add_schedule_card(self, row: dict) -> None:
+        when = row.get("datetime")
+        time_text = when.strftime("%H:%M") if isinstance(when, datetime) else "--:--"
+        item = QListWidgetItem()
+        item.setData(Qt.ItemDataRole.UserRole, row)
+        item.setSizeHint(QSize(1, 88))
+        self.schedule_list.addItem(item)
+        widget = QFrame()
+        widget.setObjectName("DashboardPlanCard")
+        tokens = DARK if self._theme == "dark" else LIGHT
+        state = str(row.get("state") or "future")
+        if state == "failed":
+            background, accent = tokens.failure_card, tokens.danger
+        elif state == "running":
+            background, accent = tokens.running_card, tokens.warning
+        elif state == "next":
+            background, accent = tokens.next_card, tokens.success
+        elif state in {"done", "off"}:
+            background, accent = tokens.ended_card, tokens.ended
+        else:
+            background, accent = tokens.card, tokens.muted
+        widget.setStyleSheet(
+            f"QFrame#DashboardPlanCard {{ background: {background}; border: 1px solid {tokens.border}; border-radius: 9px; }}"
+        )
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 7, 9, 7)
+        layout.setSpacing(10)
+        rail = QFrame()
+        rail.setFixedWidth(5)
+        rail.setStyleSheet(f"background: {accent}; border: 0; border-radius: 2px;")
+        layout.addWidget(rail)
+        time_label = QLabel(time_text)
+        time_label.setFixedWidth(66)
+        time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        time_label.setStyleSheet(f"color: {accent}; font-family: 'Segoe UI'; font-size: 18px; font-weight: 700;")
+        layout.addWidget(time_label)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(3)
+        title = QLabel(str(row.get("display_label") or row.get("label") or "计划"))
+        title.setStyleSheet("font-weight: 600;")
+        title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        status_text = f"{row.get('status_title', '')} · {row.get('status_detail', '')}".strip(" ·")
+        status = QLabel(status_text)
+        status.setObjectName("MutedLabel")
+        status.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        status.setToolTip(status_text)
+        content_layout.addWidget(title)
+        content_layout.addWidget(status)
+        layout.addWidget(content, 1)
+        toggle = QPushButton("恢复监测" if row.get("skipped") else "关闭本次")
+        toggle.setFixedWidth(82)
+        toggle.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        toggle.setToolTip("只调整 Agent 对这一次计划的监督预期，不修改 MAA 定时器。")
+        toggle.clicked.connect(lambda _checked=False, value=dict(row), button=toggle: self._toggle_plan(value, button))
+        layout.addWidget(toggle)
+        self.schedule_list.setItemWidget(item, widget)
 
     def _toggle_plan(self, item: dict, button: QPushButton) -> None:
         button.setEnabled(False)
@@ -303,6 +382,12 @@ class DashboardPage(QWidget):
     def _render_logs(self) -> None:
         values = [line for line in self._log_lines if self._line_visible(line)][-120:]
         self.log_view.setPlainText("\n".join(values))
+        if values:
+            self.log_view.setPlaceholderText("")
+        elif self.page_state.get("log_cutoff"):
+            self.log_view.setPlaceholderText("主页此前事件已隐藏；源日志仍完整保留。")
+        else:
+            self.log_view.setPlaceholderText("暂时没有事故或恢复事件；Agent 的正常运行不会在这里刷屏。")
         self.log_view.verticalScrollBar().setValue(self.log_view.verticalScrollBar().maximum())
 
     def _change_log_mode(self, mode: str) -> None:
@@ -336,3 +421,4 @@ class DashboardPage(QWidget):
     def set_theme(self, theme: str) -> None:
         self._theme = theme
         self.chart.set_theme(theme)
+        self._render_schedule_rows()

@@ -170,6 +170,14 @@ class SchedulePage(QWidget):
         self.delegate.set_theme(theme)
         self.list_view.viewport().update()
 
+    def on_activated(self) -> None:
+        self.refresh_tick()
+
+    def refresh_tick(self) -> None:
+        if not self._loading:
+            self._capture_view_anchor()
+            self.refresh("preserve")
+
     def set_day(self, selected: date) -> None:
         self.selected_day = selected
         self.page_state["selected_day"] = selected.isoformat()

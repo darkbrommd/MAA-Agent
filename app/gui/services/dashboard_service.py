@@ -68,7 +68,16 @@ def load_dashboard_snapshot(base_dir: Path, now: datetime | None = None) -> Dash
     base_dir = Path(base_dir)
     now = now or datetime.now()
     cfg = _read_mapping(config_path(base_dir))
-    rows, _meta = effective_occurrences(base_dir, cfg, now, now + timedelta(hours=36), include_skipped=True)
+    # Keep recently due occurrences visible while the Agent confirms whether
+    # they actually started.  Starting exactly at ``now`` made a 04:00 row
+    # disappear from the dashboard at 04:00:01.
+    rows, _meta = effective_occurrences(
+        base_dir,
+        cfg,
+        now - timedelta(hours=2),
+        now + timedelta(hours=36),
+        include_skipped=True,
+    )
     state_dir = base_dir / "state"
     run_state = _read_mapping(state_dir / "schedule_run_status.json")
     run_records = run_state.get("runs") if isinstance(run_state.get("runs"), dict) else run_state
@@ -76,7 +85,14 @@ def load_dashboard_snapshot(base_dir: Path, now: datetime | None = None) -> Dash
         day: _read_mapping(state_dir / f"daily_{day.isoformat()}.json")
         for day in {row["datetime"].date() for row in rows}
     }
-    decorated = decorate_schedule_rows(rows, run_records, daily_states, set(), now)[:16]
+    decorated = decorate_schedule_rows(
+        rows,
+        run_records,
+        daily_states,
+        set(),
+        now,
+        float(cfg.get("scheduled_run_grace_minutes", 15) or 15),
+    )[:16]
     aliases = {str(key): str(value).strip() for key, value in (cfg.get("maa_instance_aliases") or {}).items()}
     for row in decorated:
         label = str(row.get("label") or "")

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from PySide6.QtCore import QEasingCurve, QEvent, QRect, QRectF, QSize, Qt, QVariantAnimation, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen
 from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
 
 from gui.models.schedule_model import ScheduleModel
@@ -191,9 +191,11 @@ class TimelineDelegate(QStyledItemDelegate):
             weekday = "一二三四五六日"[when.weekday()] if when else ""
             header = QRectF(option.rect).adjusted(12, 1, -12, -option.rect.height() + 29)
             painter.setPen(QColor(tokens.text))
-            painter.setFont(QFont("Microsoft YaHei UI", 10, QFont.Weight.DemiBold))
-            painter.drawText(header, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, f"{day_text} · 星期{weekday}")
-            line_left = min(header.right(), header.left() + 154)
+            text = f"{day_text} · 星期{weekday}"
+            font = QFont("Microsoft YaHei UI", 11, QFont.Weight.DemiBold)
+            painter.setFont(font)
+            painter.drawText(header, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, text)
+            line_left = min(header.right(), header.left() + QFontMetricsF(font).horizontalAdvance(text) + 14)
             painter.setPen(QPen(QColor(tokens.border), 1))
             line = QRectF(line_left, header.center().y(), max(0, header.right() - line_left), 1)
             painter.drawLine(line.topLeft(), line.topRight())
@@ -221,7 +223,7 @@ class TimelineDelegate(QStyledItemDelegate):
         painter.setFont(QFont("Microsoft YaHei UI", 11, QFont.Weight.DemiBold))
         painter.drawText(layout.title, Qt.AlignmentFlag.AlignVCenter, str(item.get("display_label") or item.get("label") or "计划"))
         painter.setPen(QColor(tokens.muted))
-        painter.setFont(QFont("Microsoft YaHei UI", 9))
+        painter.setFont(QFont("Microsoft YaHei UI", 10))
         day_text = when.strftime("%Y-%m-%d") if when else ""
         config = str(item.get("config") or "默认任务")
         painter.drawText(layout.subtitle, Qt.AlignmentFlag.AlignVCenter, f"{day_text} · {config}")
@@ -232,10 +234,10 @@ class TimelineDelegate(QStyledItemDelegate):
         painter.setBrush(badge_fill)
         painter.drawRoundedRect(layout.state_badge, 7, 7)
         painter.setPen(QColor(accent))
-        painter.setFont(QFont("Microsoft YaHei UI", 9, QFont.Weight.DemiBold))
+        painter.setFont(QFont("Microsoft YaHei UI", 10, QFont.Weight.DemiBold))
         painter.drawText(layout.state_badge, Qt.AlignmentFlag.AlignCenter, str(item.get("status_title") or "等待运行"))
         painter.setPen(QColor(tokens.muted if state not in {"failed", "running", "next"} else accent))
-        painter.setFont(QFont("Microsoft YaHei UI", 9))
+        painter.setFont(QFont("Microsoft YaHei UI", 10))
         painter.drawText(layout.status, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, str(item.get("status_detail") or ""))
 
         self._draw_button(painter, layout.error_button, "查看错误", tokens.danger, background)
