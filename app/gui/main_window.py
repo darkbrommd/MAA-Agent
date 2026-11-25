@@ -15,6 +15,9 @@ from PySide6.QtWidgets import (
 )
 
 from gui.navigation import ITEMS, NavigationRail
+from gui.pages.dashboard import DashboardPage
+from gui.pages.logs import LogsPage
+from gui.pages.news import NewsPage
 from gui.pages.resources import ResourcesPage
 from gui.pages.schedule import SchedulePage
 from gui.services.process_service import ProcessService, ProcessSnapshot
@@ -51,6 +54,7 @@ class MainWindow(QMainWindow):
         self._pages: dict[str, QWidget] = {}
         self._page_indexes: dict[str, int] = {}
         self._current_page = ""
+        self._latest_process_snapshot: ProcessSnapshot | None = None
         self._theme = self.app_state.theme
         self._build_ui()
         self.app_state.theme_changed.connect(self._apply_theme)
@@ -120,10 +124,23 @@ class MainWindow(QMainWindow):
         shell.addWidget(content, 1)
 
     def _create_page(self, key: str) -> QWidget:
+        if key == "dashboard":
+            page = DashboardPage(self.base_dir, self.app_state.page_state(key), self._theme)
+            page.open_schedule.connect(lambda: self.show_page("schedule"))
+            self.refresh_manager.register("dashboard", 2000, page.refresh_tick)
+            if self._latest_process_snapshot is not None:
+                page.update_process_snapshot(self._latest_process_snapshot)
+            return page
         if key == "schedule":
             return SchedulePage(self.base_dir, self.app_state.page_state(key), self._theme)
         if key == "resources":
             return ResourcesPage(self.base_dir, self.app_state.page_state(key), self._theme)
+        if key == "news":
+            return NewsPage(self.base_dir, self.app_state.page_state(key), self._theme)
+        if key == "logs":
+            page = LogsPage(self.base_dir, self.app_state.page_state(key), self._theme)
+            self.refresh_manager.register("logs", 1500, page.refresh)
+            return page
         title = next((item.label for item in ITEMS if item.key == key), key)
         return _PlaceholderPage(title)
 
@@ -138,6 +155,11 @@ class MainWindow(QMainWindow):
         self._current_page = key
         self.navigation.set_current(key)
         self.refresh_manager.set_active_page(key)
+        if hasattr(self, "process_timer"):
+            self.process_timer.setInterval(2000 if key == "dashboard" else 4000)
+        activated = getattr(self._pages[key], "on_activated", None)
+        if callable(activated):
+            activated()
 
     def _apply_theme(self, theme: str) -> None:
         self._theme = theme
@@ -149,6 +171,7 @@ class MainWindow(QMainWindow):
                 setter(theme)
 
     def _show_process_snapshot(self, snapshot: ProcessSnapshot) -> None:
+        self._latest_process_snapshot = snapshot
         self._set_status_pill(
             self.agent_pill,
             f"Agent · {'运行中' if snapshot.agent_running else '已停止'}",
@@ -167,6 +190,9 @@ class MainWindow(QMainWindow):
             "running" if snapshot.mumu_count else "stopped",
         )
         self.agent_action.setText("停止 Agent" if snapshot.agent_running else "启动 Agent")
+        dashboard = self._pages.get("dashboard")
+        if isinstance(dashboard, DashboardPage):
+            dashboard.update_process_snapshot(snapshot)
 
     @staticmethod
     def _set_status_pill(label: QLabel, text: str, status: str) -> None:

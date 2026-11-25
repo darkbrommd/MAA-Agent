@@ -32,6 +32,12 @@ def _read_mapping(path: Path) -> dict:
         return {}
 
 
+def schedule_run_records(value: dict) -> dict:
+    """Accept both the current {runs: {...}} file and the legacy flat mapping."""
+    runs = value.get("runs") if isinstance(value, dict) else None
+    return runs if isinstance(runs, dict) else value
+
+
 def decorate_schedule_rows(
     rows: list[dict],
     run_records: dict,
@@ -124,7 +130,7 @@ class _ScheduleWorker(QRunnable):
             cfg = _read_mapping(config_path(self.base_dir))
             rows, meta = effective_occurrences(self.base_dir, cfg, self.start, self.end, include_skipped=True)
             state_dir = self.base_dir / "state"
-            run_records = _read_mapping(state_dir / "schedule_run_status.json")
+            run_records = schedule_run_records(_read_mapping(state_dir / "schedule_run_status.json"))
             daily_states = {day: _read_mapping(state_dir / f"daily_{day.isoformat()}.json") for day in {row["datetime"].date() for row in rows}}
             alerted = set()
             for row in rows:

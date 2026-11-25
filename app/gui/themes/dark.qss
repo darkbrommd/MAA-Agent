@@ -6,7 +6,7 @@ QWidget {{
 QMainWindow, QDialog, QWidget#AppRoot, QWidget#ContentArea, QStackedWidget {{ background: {background}; }}
 QFrame#NavigationRail {{ background: {navigation}; border-right: 1px solid {border}; }}
 QFrame#TopStatusBar {{ background: {navigation}; border-bottom: 1px solid {border}; }}
-QFrame#Card, QListView, QPlainTextEdit, QTextEdit {{
+QFrame#Card, QFrame#MetricCard, QListView, QListWidget, QPlainTextEdit, QTextEdit, QTextBrowser {{
     background: {card};
     border: 1px solid {border};
     border-radius: 10px;
@@ -36,8 +36,16 @@ QLabel#StatusPill[status="warning"] {{ background: {running_card}; color: {warni
 QLabel#StatusPill[status="stopped"] {{ background: {ended_card}; color: {ended}; border-color: {border}; }}
 QLabel#StatusPill[status="error"] {{ background: {failure_card}; color: {danger}; border-color: {danger}; }}
 QLineEdit, QComboBox, QSpinBox, QDateEdit {{ background: {card}; border: 1px solid {border}; border-radius: 7px; padding: 6px 8px; }}
+QFrame#MetricCard {{ min-height: 88px; }}
+QProgressBar#MetricProgress {{ background: {disabled_background}; color: {text}; border: 1px solid {border}; border-radius: 6px; text-align: center; font-family: "Segoe UI"; font-weight: 700; }}
+QProgressBar#MetricProgress::chunk {{ background: {accent}; border-radius: 5px; }}
+QProgressBar#MetricProgress[metric="memory"]::chunk {{ background: {success}; }}
+QProgressBar#MetricProgress[metric="disk"]::chunk {{ background: {warning}; }}
 QListView {{ outline: 0; }}
-QListView::item, QListView::item:selected, QListView::item:hover {{ background: transparent; border: 0; }}
+QListView::item, QListView::item:selected, QListView::item:hover {{ border: 0; padding: 7px; }}
+QListView::item:selected {{ background: {disabled_background}; color: {accent}; border-radius: 6px; }}
+QListWidget {{ outline: 0; }}
+QListWidget::item {{ padding: 7px; border-bottom: 1px solid {border}; }}
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
 QScrollBar::handle:vertical {{ background: {border}; min-height: 30px; border-radius: 4px; }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}

@@ -38,6 +38,12 @@ jobs:
         run: python -m compileall -q app tests tools
       - name: Run regression tests
         run: python -m unittest discover -s tests -v
+      - name: Run GUI edge tests at 175% scaling
+        if: matrix.python-version == '3.14'
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_SCALE_FACTOR: '1.75'
+        run: python -m unittest tests.test_z_gui_v2 -v
 
   build-windows:
     name: Build Windows release artifact

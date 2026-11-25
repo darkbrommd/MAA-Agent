@@ -18,10 +18,21 @@ class InstanceProcessState:
 
 
 @dataclass(frozen=True)
+class ProcessMemoryState:
+    name: str
+    pid: int
+    memory_mb: float
+
+
+@dataclass(frozen=True)
 class ProcessSnapshot:
     cpu_percent: float
     memory_percent: float
     memory_used_gb: float
+    disk_percent: float
+    disk_used_gb: float
+    disk_total_gb: float
+    top_processes: tuple[ProcessMemoryState, ...]
     agent_running: bool
     agent_pid: int | None
     maa_instances: tuple[InstanceProcessState, ...]
@@ -58,7 +69,7 @@ class _ProcessWorker(QRunnable):
                     })
                 except (psutil.Error, OSError, TypeError, ValueError):
                     continue
-            snapshot = _build_snapshot(cfg, rows)
+            snapshot = _build_snapshot(cfg, rows, self.base_dir)
             self.signals.done.emit(snapshot)
         except Exception as exc:
             self.signals.failed.emit(str(exc))
@@ -73,7 +84,7 @@ def _path_is_below(executable: str, directory: str) -> bool:
         return False
 
 
-def _build_snapshot(cfg: dict, rows: list[dict]) -> ProcessSnapshot:
+def _build_snapshot(cfg: dict, rows: list[dict], disk_path: Path | None = None) -> ProcessSnapshot:
     instance_dirs = {str(key): str(value) for key, value in (cfg.get("maa_instance_dirs") or {}).items()}
     instance_pids: dict[str, list[int]] = {label: [] for label in instance_dirs}
     mumu_names = {str(value).lower() for value in (cfg.get("mumu_process_names") or ())}
@@ -94,10 +105,29 @@ def _build_snapshot(cfg: dict, rows: list[dict]) -> ProcessSnapshot:
             mumu_count += 1
             mumu_memory += row["memory"]
     vm = psutil.virtual_memory()
+    try:
+        disk = psutil.disk_usage(str(disk_path or Path.cwd()))
+        disk_percent = float(disk.percent)
+        disk_used_gb = float(disk.used) / 1024**3
+        disk_total_gb = float(disk.total) / 1024**3
+    except (OSError, psutil.Error):
+        disk_percent = disk_used_gb = disk_total_gb = 0.0
+    top_processes = tuple(
+        ProcessMemoryState(
+            str(row.get("name") or f"PID {row.get('pid', '?')}"),
+            int(row.get("pid") or 0),
+            float(row.get("memory") or 0) / 1048576,
+        )
+        for row in sorted(rows, key=lambda item: int(item.get("memory") or 0), reverse=True)[:3]
+    )
     return ProcessSnapshot(
         cpu_percent=float(psutil.cpu_percent(interval=None)),
         memory_percent=float(vm.percent),
         memory_used_gb=float(vm.total - vm.available) / 1024**3,
+        disk_percent=disk_percent,
+        disk_used_gb=disk_used_gb,
+        disk_total_gb=disk_total_gb,
+        top_processes=top_processes,
         agent_running=agent_pid is not None,
         agent_pid=agent_pid,
         maa_instances=tuple(

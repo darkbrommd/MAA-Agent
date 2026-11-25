@@ -28,12 +28,18 @@ from gui.components.resource_chart import ResourceChart
 from gui.components.responsive_layout import responsive_card_rect
 from gui.components.timeline_delegate import TimelineDelegate, compute_card_layout
 from gui.main_window import MainWindow
+from gui.models.news_model import NewsModel
+from gui.pages.dashboard import DashboardPage
+from gui.pages.news import NewsPage
 from gui.models.schedule_model import ScheduleModel, schedule_row_key
 from gui.pages.resources import _WhitelistSaveWorker
 from gui.pages.schedule import SchedulePage, _OverrideWorker
 from gui.resource_paths import resource_path
+from gui.services.dashboard_service import dashboard_source_signature
+from gui.services.log_service import line_matches, read_log_chunk
+from gui.services.news_service import NewsSnapshot
 from gui.services.process_service import _build_snapshot
-from gui.services.schedule_service import decorate_schedule_rows, occurrence_key
+from gui.services.schedule_service import decorate_schedule_rows, occurrence_key, schedule_run_records
 from gui.state.refresh_manager import RefreshManager
 from gui.state.app_state import AppState
 from gui.themes.tokens import DARK, LIGHT, load_stylesheet
@@ -118,6 +124,12 @@ class GuiV2Tests(unittest.TestCase):
         self.assertEqual([row["state"] for row in decorated].count("next"), 1)
         self.assertEqual(decorated[1]["state"], "next")
 
+    def test_schedule_run_records_accepts_current_and_legacy_shapes(self):
+        current = {"runs": {"MAA1|2026-11-25 08:00": {"status": "failed"}}, "version": 2}
+        self.assertEqual(schedule_run_records(current), current["runs"])
+        legacy = {"MAA1|2026-11-25 08:00": {"status": "completed"}}
+        self.assertIs(schedule_run_records(legacy), legacy)
+
     def test_delegate_uses_one_shared_layout_for_error_hit_area(self):
         rect = QRect(0, 0, 920, 112)
         layout = compute_card_layout(rect, {"state": "failed", "override": {"id": "one"}})
@@ -130,7 +142,7 @@ class GuiV2Tests(unittest.TestCase):
         self.assertGreaterEqual(layout.error_button.left(), layout.status.right())
         self.assertFalse(layout.error_button.intersects(layout.move_button))
         self.assertFalse(layout.move_button.intersects(layout.clear_button))
-        for scaled_width in (920, 1150, 1380):
+        for scaled_width in (920, 1150, 1380, 1610):
             scaled = compute_card_layout(QRect(0, 0, scaled_width, 140), {"state": "failed", "override": {"id": "one"}})
             self.assertTrue(scaled.card.contains(scaled.error_button.center()))
             self.assertTrue(scaled.card.contains(scaled.move_button.center()))
@@ -375,6 +387,121 @@ class GuiV2Tests(unittest.TestCase):
         self.assertEqual(snapshot.agent_pid, 13)
         self.assertEqual(snapshot.maa_instances[0].pids, (11,))
         self.assertEqual(snapshot.mumu_count, 1)
+        self.assertEqual([item.pid for item in snapshot.top_processes], [12, 13, 11])
+        self.assertGreaterEqual(snapshot.disk_total_gb, 0)
+
+    def test_log_tail_reads_only_appended_bytes_and_resets_after_truncate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "agent.log"
+            path.write_text("first\nsecond\n", encoding="utf-8")
+            initial = read_log_chunk(path)
+            self.assertTrue(initial.reset)
+            self.assertEqual(initial.text.splitlines(), ["first", "second"])
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write("third\n")
+            appended = read_log_chunk(
+                path,
+                offset=initial.offset,
+                identity=initial.identity,
+                anchor=initial.anchor,
+                initialized=True,
+            )
+            self.assertFalse(appended.reset)
+            self.assertEqual(appended.text.splitlines(), ["third"])
+            replacement_text = "replacement after a fast truncate is longer than the previous file\n"
+            path.write_text(replacement_text, encoding="utf-8")
+            replaced = read_log_chunk(
+                path,
+                offset=appended.offset,
+                identity=appended.identity,
+                anchor=appended.anchor,
+                initialized=True,
+            )
+            self.assertTrue(replaced.reset)
+            self.assertEqual(replaced.text.splitlines(), [replacement_text.strip()])
+            path.write_text("new\n", encoding="utf-8")
+            truncated = read_log_chunk(
+                path,
+                offset=replaced.offset,
+                identity=replaced.identity,
+                anchor=replaced.anchor,
+                initialized=True,
+            )
+            self.assertTrue(truncated.reset)
+            self.assertEqual(truncated.text.splitlines(), ["new"])
+            path.unlink()
+            missing = read_log_chunk(
+                path,
+                offset=truncated.offset,
+                identity=truncated.identity,
+                anchor=truncated.anchor,
+                initialized=True,
+            )
+            self.assertTrue(missing.reset)
+            self.assertFalse(missing.exists)
+        self.assertTrue(line_matches("ERROR task failed", "错误与警告"))
+        self.assertFalse(line_matches("INFO normal", "错误与警告"))
+        self.assertTrue(line_matches("INFO 已恢复", "事故与恢复", "恢复"))
+
+    def test_news_model_and_page_keep_selected_cid_when_rows_refresh(self):
+        model = NewsModel()
+        model.set_rows(({"cid": "one"}, {"cid": "two"}))
+        self.assertEqual(model.row_for_cid("two"), 1)
+        with tempfile.TemporaryDirectory() as temporary:
+            base_dir = Path(temporary)
+            (base_dir / "config").mkdir()
+            (base_dir / "state").mkdir()
+            (base_dir / "config" / "config.json").write_text("{}", encoding="utf-8")
+            page = NewsPage(base_dir, {"selected_cid": "two"})
+            first = NewsSnapshot(
+                ({"cid": "one", "title": "A"}, {"cid": "two", "title": "B"}),
+                "now",
+                "local",
+                total=2,
+            )
+            page._apply_snapshot(first)
+            page.list.setCurrentIndex(page.model.index(1, 0))
+            second = NewsSnapshot(
+                ({"cid": "new", "title": "N"}, {"cid": "two", "title": "B2"}),
+                "later",
+                "local",
+                total=2,
+            )
+            page._apply_snapshot(second)
+            self.assertEqual(page.model.item(page.list.currentIndex().row())["cid"], "two")
+            QThreadPool.globalInstance().waitForDone(3000)
+            process_events(80)
+            page.close()
+
+    def test_dashboard_clear_only_changes_display_cutoff(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base_dir = Path(temporary)
+            (base_dir / "logs").mkdir()
+            path = base_dir / "logs" / "agent.log"
+            original = "2026-11-25 12:00:00 INFO keep me\n"
+            path.write_text(original, encoding="utf-8")
+            state = {}
+            page = DashboardPage(base_dir, state)
+            page._log_lines = original.splitlines()
+            page._render_logs()
+            page._clear_home_log()
+            self.assertIn("log_cutoff", state)
+            self.assertEqual(path.read_text(encoding="utf-8"), original)
+            self.assertEqual(page.log_view.toPlainText(), "")
+            page.close()
+
+    def test_dashboard_signature_changes_only_when_sources_change(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base_dir = Path(temporary)
+            (base_dir / "config").mkdir()
+            (base_dir / "state").mkdir()
+            path = base_dir / "config" / "config.json"
+            path.write_text("{}", encoding="utf-8")
+            now = datetime(2026, 11, 25, 12, 34, 10)
+            first = dashboard_source_signature(base_dir, now)
+            self.assertEqual(first, dashboard_source_signature(base_dir, now + timedelta(seconds=20)))
+            path.write_text('{"operational_day_start_hour": 5}', encoding="utf-8")
+            self.assertNotEqual(first, dashboard_source_signature(base_dir, now))
 
     def test_whitelist_save_is_atomic_and_keeps_backup(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -440,6 +567,12 @@ class GuiV2Tests(unittest.TestCase):
             self.assertIs(window._pages["schedule"], schedule)
             self.assertIs(window._pages["resources"], resources)
             self.assertEqual(resources.selected_day, chosen)
+            window.show_page("dashboard")
+            window.show_page("news")
+            window.show_page("logs")
+            self.assertIsInstance(window._pages["dashboard"], DashboardPage)
+            self.assertIsInstance(window._pages["news"], NewsPage)
+            self.assertEqual(window._pages["logs"].view.maximumBlockCount(), 5000)
             window.close()
             process_events(100)
         QThreadPool.globalInstance().waitForDone(3000)
