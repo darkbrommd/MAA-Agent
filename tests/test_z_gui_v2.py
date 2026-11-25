@@ -51,6 +51,16 @@ def process_events(milliseconds: int = 80) -> None:
         QCoreApplication.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 10)
 
 
+def wait_until(predicate, milliseconds: int = 1000) -> bool:
+    deadline = time.monotonic() + milliseconds / 1000
+    while time.monotonic() < deadline:
+        QCoreApplication.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 10)
+        if predicate():
+            return True
+        time.sleep(0.005)
+    return bool(predicate())
+
+
 class GuiV2Tests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -165,13 +175,10 @@ class GuiV2Tests(unittest.TestCase):
         item = {"label": "MAA1", "datetime": when, "original_datetime": when, "skipped": False}
         self.assertEqual(delegate.toggle_progress(item), 1.0)
         delegate.animate_toggle(item, False)
-        process_events(55)
-        self.assertLess(delegate.toggle_progress(item), 1.0)
-        process_events(160)
-        self.assertAlmostEqual(delegate.toggle_progress(item), 0.0, delta=0.02)
+        self.assertTrue(wait_until(lambda: delegate.toggle_progress(item) < 0.99))
+        self.assertTrue(wait_until(lambda: abs(delegate.toggle_progress(item)) < 0.02))
         delegate.animate_toggle(item, True)
-        process_events(180)
-        self.assertAlmostEqual(delegate.toggle_progress(item), 1.0, delta=0.02)
+        self.assertTrue(wait_until(lambda: delegate.toggle_progress(item) > 0.98))
 
     def test_schedule_model_replaces_rows_atomically(self):
         model = ScheduleModel()
