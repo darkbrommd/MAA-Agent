@@ -265,7 +265,8 @@ class DashboardPage(QWidget):
         header = QWidget()
         layout = QHBoxLayout(header)
         layout.setContentsMargins(8, 2, 8, 0)
-        label = QLabel(f"{when:%Y年%m月%d日} · 星期{'一二三四五六日'[when.weekday()]}")
+        date_text = f"{when.year:04d}年{when.month:02d}月{when.day:02d}日"
+        label = QLabel(f"{date_text} · 星期{'一二三四五六日'[when.weekday()]}")
         label.setStyleSheet("font-weight: 600;")
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
