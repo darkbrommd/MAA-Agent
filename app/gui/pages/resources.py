@@ -6,7 +6,7 @@ import shutil
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QRectF, QRunnable, QThreadPool, Qt, Signal, QSize
+from PySide6.QtCore import QObject, QRectF, QRunnable, QThreadPool, QTimer, Qt, Signal, QSize
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QMessageBox,
     QPushButton,
+    QSplitter,
     QStackedWidget,
     QStyledItemDelegate,
     QStyleOptionViewItem,
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui.components.resource_chart import ResourceChart
+from gui.components.responsive_layout import responsive_card_rect
 from gui.models.resource_model import ResourceModel
 from gui.services.resource_service import ResourceService, ResourceSnapshot
 from gui.themes.tokens import DARK, LIGHT
@@ -93,12 +95,12 @@ class _ResourceDelegate(QStyledItemDelegate):
         self.theme = theme
 
     def sizeHint(self, option, index) -> QSize:
-        return QSize(max(320, option.rect.width()), 82)
+        return QSize(1, 82)
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
         item = index.data(ResourceModel.ItemRole) or {}
         tokens = DARK if self.theme == "dark" else LIGHT
-        rect = QRectF(option.rect).adjusted(8, 4, -8, -4)
+        rect = responsive_card_rect(option.rect, horizontal_margin=8, vertical_margin=4)
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setPen(QPen(QColor(tokens.border), 1))
@@ -139,6 +141,10 @@ class ResourcesPage(QWidget):
         self._whitelist_workers: set[_WhitelistWorker] = set()
         self._whitelist_rows: list[dict] = []
         self._whitelist_save_worker: _WhitelistSaveWorker | None = None
+        self._splitter_save_timer = QTimer(self)
+        self._splitter_save_timer.setSingleShot(True)
+        self._splitter_save_timer.setInterval(220)
+        self._splitter_save_timer.timeout.connect(self._save_splitter_sizes)
         self._build_ui()
         self._load_whitelist()
 
@@ -157,6 +163,7 @@ class ResourcesPage(QWidget):
         whitelist_button = QPushButton("资源白名单")
         for index, button in enumerate((history_button, whitelist_button)):
             button.setCheckable(True)
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             segments.addButton(button, index)
             header.addWidget(button)
         history_button.setChecked(True)
@@ -171,6 +178,8 @@ class ResourcesPage(QWidget):
         previous = QPushButton("‹ 前一天")
         next_button = QPushButton("后一天 ›")
         today = QPushButton("今天")
+        for button in (previous, today, next_button):
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         previous.clicked.connect(lambda: self.request_day(self.selected_day - timedelta(days=1)))
         next_button.clicked.connect(lambda: self.request_day(self.selected_day + timedelta(days=1)))
         today.clicked.connect(lambda: self.request_day(date.today()))
@@ -186,17 +195,38 @@ class ResourcesPage(QWidget):
         history_layout.addWidget(self.summary)
         self.chart = ResourceChart(self.theme)
         self.chart.snapshot_activated.connect(self._show_detail)
-        history_layout.addWidget(self.chart, 2)
+        self.history_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.history_splitter.setChildrenCollapsible(False)
+        self.history_splitter.setOpaqueResize(True)
+        self.history_splitter.setHandleWidth(6)
+        self.history_splitter.addWidget(self.chart)
+        anomaly_panel = QWidget()
+        anomaly_layout = QVBoxLayout(anomaly_panel)
+        anomaly_layout.setContentsMargins(0, 0, 0, 0)
+        anomaly_layout.setSpacing(6)
         anomaly_title = QLabel("异常采样")
         anomaly_title.setStyleSheet("font-weight: 600;")
-        history_layout.addWidget(anomaly_title)
+        anomaly_layout.addWidget(anomaly_title)
         self.anomalies = QListView()
         self.anomalies.setModel(self.model)
         self.anomalies.setItemDelegate(self.delegate)
+        self.anomalies.setSelectionMode(QListView.SelectionMode.NoSelection)
+        self.anomalies.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.anomalies.setUniformItemSizes(True)
         self.anomalies.setVerticalScrollMode(QListView.ScrollMode.ScrollPerPixel)
+        self.anomalies.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.anomalies.setResizeMode(QListView.ResizeMode.Adjust)
         self.anomalies.doubleClicked.connect(lambda index: self._show_detail(self.model.item(index.row()) or {}))
-        history_layout.addWidget(self.anomalies, 1)
+        anomaly_layout.addWidget(self.anomalies, 1)
+        anomaly_panel.setMinimumHeight(140)
+        self.history_splitter.addWidget(anomaly_panel)
+        self.history_splitter.setStretchFactor(0, 3)
+        self.history_splitter.setStretchFactor(1, 2)
+        self.history_splitter.splitterMoved.connect(lambda _position, _index: self._splitter_save_timer.start())
+        history_layout.addWidget(self.history_splitter, 1)
+        saved_sizes = self.page_state.get("splitter_sizes")
+        sizes = [int(value) for value in saved_sizes] if isinstance(saved_sizes, list) and len(saved_sizes) == 2 else [480, 250]
+        QTimer.singleShot(0, lambda values=sizes: self.history_splitter.setSizes(values))
         self.stack.addWidget(history)
         whitelist = QWidget()
         whitelist_layout = QVBoxLayout(whitelist)
@@ -223,7 +253,16 @@ class ResourcesPage(QWidget):
         self.whitelist = QListWidget()
         whitelist_layout.addWidget(self.whitelist, 1)
         self.stack.addWidget(whitelist)
+        segment = int(self.page_state.get("segment", 0))
+        segment = segment if segment in (0, 1) else 0
+        self.stack.setCurrentIndex(segment)
+        (history_button if segment == 0 else whitelist_button).setChecked(True)
         self._update_day_label()
+
+    def _save_splitter_sizes(self) -> None:
+        sizes = self.history_splitter.sizes()
+        if len(sizes) == 2 and all(size > 0 for size in sizes):
+            self.page_state["splitter_sizes"] = sizes
 
     def set_theme(self, theme: str) -> None:
         self.theme = theme

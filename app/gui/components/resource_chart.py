@@ -16,7 +16,7 @@ class ResourceChart(QWidget):
     def __init__(self, theme: str = "dark", parent=None):
         super().__init__(parent)
         self.setMouseTracking(True)
-        self.setMinimumHeight(280)
+        self.setMinimumHeight(200)
         self._tokens: ThemeTokens = DARK if theme == "dark" else LIGHT
         self._rows: tuple[dict, ...] = ()
         self._day = date.today()

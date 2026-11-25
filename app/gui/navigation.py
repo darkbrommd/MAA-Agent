@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QButtonGroup, QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout
+
+from gui.resource_paths import resource_path
 
 
 @dataclass(frozen=True)
@@ -11,16 +13,20 @@ class NavigationItem:
     key: str
     label: str
     group: str
+    icon: str
 
 
 ITEMS = (
-    NavigationItem("dashboard", "总览", "监控中心"),
-    NavigationItem("schedule", "日程管理", "监控中心"),
-    NavigationItem("resources", "资源监控", "监控中心"),
-    NavigationItem("news", "公告中心", "监控中心"),
-    NavigationItem("logs", "日志中心", "系统管理"),
-    NavigationItem("settings", "设置", "系统管理"),
+    NavigationItem("dashboard", "总览", "监控中心", "dashboard"),
+    NavigationItem("schedule", "日程管理", "监控中心", "calendar"),
+    NavigationItem("resources", "资源监控", "监控中心", "activity"),
+    NavigationItem("news", "公告中心", "监控中心", "newspaper"),
+    NavigationItem("logs", "日志中心", "系统管理", "file-text"),
+    NavigationItem("settings", "设置", "系统管理", "settings"),
 )
+
+
+ICON_DIR = resource_path("assets", "icons")
 
 
 class NavigationRail(QFrame):
@@ -46,6 +52,10 @@ class NavigationRail(QFrame):
         product_row.addWidget(self.product, 1)
         collapse = QPushButton("‹")
         collapse.setFixedWidth(34)
+        collapse.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        collapse.setIcon(QIcon(str(ICON_DIR / "chevron-left.svg")))
+        collapse.setIconSize(QSize(17, 17))
+        collapse.setText("")
         collapse.setToolTip("折叠 / 展开导航栏")
         collapse.clicked.connect(self._toggle_collapsed)
         self.collapse_button = collapse
@@ -72,6 +82,9 @@ class NavigationRail(QFrame):
             button = QPushButton(item.label)
             button.setObjectName("NavButton")
             button.setCheckable(True)
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            button.setIcon(QIcon(str(ICON_DIR / f"{item.icon}.svg")))
+            button.setIconSize(QSize(18, 18))
             button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             button.clicked.connect(lambda _checked=False, key=item.key: self.page_requested.emit(key))
             group.addButton(button)
@@ -81,6 +94,7 @@ class NavigationRail(QFrame):
 
         layout.addStretch(1)
         self.theme_button = QPushButton()
+        self.theme_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.theme_button.clicked.connect(self._toggle_theme)
         layout.addWidget(self.theme_button)
         version_label = QLabel(f"v{version}")
@@ -96,10 +110,12 @@ class NavigationRail(QFrame):
 
     def set_theme(self, theme: str) -> None:
         self._theme = "light" if theme == "light" else "dark"
+        self.theme_button.setIcon(QIcon(str(ICON_DIR / ("moon.svg" if self._theme == "light" else "sun.svg"))))
+        self.theme_button.setIconSize(QSize(18, 18))
         if self._expanded:
             self.theme_button.setText("切换到深色" if self._theme == "light" else "切换到浅色")
         else:
-            self.theme_button.setText("深" if self._theme == "light" else "浅")
+            self.theme_button.setText("")
 
     def _toggle_theme(self) -> None:
         self.theme_requested.emit("dark" if self._theme == "light" else "light")
@@ -107,16 +123,19 @@ class NavigationRail(QFrame):
     def _toggle_collapsed(self) -> None:
         self._expanded = not self._expanded
         self.setFixedWidth(192 if self._expanded else 68)
-        self.product.setText("MAA Agent" if self._expanded else "MAA")
-        self.collapse_button.setText("‹" if self._expanded else "›")
+        self.product.setVisible(self._expanded)
+        self.collapse_button.setIcon(QIcon(str(ICON_DIR / ("chevron-left.svg" if self._expanded else "chevron-right.svg"))))
         for label in self._optional_labels:
             label.setVisible(self._expanded)
         for key, button in self._buttons.items():
             full = self._button_labels[key]
-            button.setText(full if self._expanded else full[:1])
+            button.setText(full if self._expanded else "")
+            button.setProperty("compact", not self._expanded)
+            button.style().unpolish(button)
+            button.style().polish(button)
             button.setToolTip("" if self._expanded else full)
         self.theme_button.setText(
             ("切换到深色" if self._theme == "light" else "切换到浅色")
             if self._expanded
-            else ("深" if self._theme == "light" else "浅")
+            else ""
         )

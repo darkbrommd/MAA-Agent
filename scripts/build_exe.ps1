@@ -48,6 +48,7 @@ VSVersionInfo(
     --windowed `
     --name "MAA-Agent" `
     --icon (Join-Path $projectRoot "assets\app_icon.ico") `
+    --add-data "$(Join-Path $projectRoot 'assets');assets" `
     --version-file $versionFile `
     --paths (Join-Path $projectRoot "app") `
     --distpath $outputRoot `

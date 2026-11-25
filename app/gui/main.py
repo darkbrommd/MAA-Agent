@@ -13,6 +13,7 @@ from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import QApplication
 
 from gui.main_window import MainWindow
+from gui.resource_paths import resource_path
 
 
 def project_root() -> Path:
@@ -28,7 +29,7 @@ def main() -> int:
     application.setOrganizationName("Taylor Yu")
     application.setFont(QFont("Microsoft YaHei UI", 10))
     base_dir = project_root()
-    icon_path = base_dir / "assets" / "app_icon.ico"
+    icon_path = resource_path("assets", "app_icon.ico")
     if icon_path.exists():
         application.setWindowIcon(QIcon(str(icon_path)))
     window = MainWindow(base_dir)

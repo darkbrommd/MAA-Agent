@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -24,14 +25,17 @@ from PySide6.QtGui import QImage, QPainter, QWheelEvent
 from PySide6.QtWidgets import QApplication
 
 from gui.components.resource_chart import ResourceChart
-from gui.components.timeline_delegate import compute_card_layout
+from gui.components.responsive_layout import responsive_card_rect
+from gui.components.timeline_delegate import TimelineDelegate, compute_card_layout
 from gui.main_window import MainWindow
 from gui.models.schedule_model import ScheduleModel, schedule_row_key
 from gui.pages.resources import _WhitelistSaveWorker
 from gui.pages.schedule import SchedulePage, _OverrideWorker
+from gui.resource_paths import resource_path
 from gui.services.process_service import _build_snapshot
 from gui.services.schedule_service import decorate_schedule_rows, occurrence_key
 from gui.state.refresh_manager import RefreshManager
+from gui.state.app_state import AppState
 from gui.themes.tokens import DARK, LIGHT, load_stylesheet
 
 
@@ -59,6 +63,20 @@ class GuiV2Tests(unittest.TestCase):
             self.assertIn("QListView::item:selected", stylesheet)
             self.assertNotIn("QWidget {\n    background:", stylesheet)
             self.assertNotIn("{background}", stylesheet)
+        self.assertTrue(resource_path("assets", "icons", "calendar.svg").is_file())
+
+    def test_gui_resource_path_prefers_onefile_bundle(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            bundle = Path(temporary)
+            icon = bundle / "assets" / "icons" / "calendar.svg"
+            icon.parent.mkdir(parents=True)
+            icon.write_text("<svg/>", encoding="utf-8")
+            with (
+                patch.object(sys, "frozen", True, create=True),
+                patch.object(sys, "_MEIPASS", str(bundle), create=True),
+                patch.object(sys, "executable", str(bundle / "MAA-Agent.exe")),
+            ):
+                self.assertEqual(resource_path("assets", "icons", "calendar.svg"), icon)
 
     def test_background_launcher_path_imports_no_pyside(self):
         code = (
@@ -118,6 +136,30 @@ class GuiV2Tests(unittest.TestCase):
             self.assertTrue(scaled.card.contains(scaled.move_button.center()))
             self.assertTrue(scaled.card.contains(scaled.clear_button.center()))
             self.assertGreater(scaled.title.width(), 0)
+
+    def test_timeline_cards_align_and_stop_growing_on_ultrawide_views(self):
+        normal = compute_card_layout(QRect(0, 0, 1200, 122), {"state": "future"})
+        wide = compute_card_layout(QRect(0, 0, 2500, 122), {"state": "future"})
+        self.assertAlmostEqual(normal.toggle.center().y(), normal.time.center().y(), delta=4)
+        self.assertAlmostEqual(normal.time.center().y(), normal.title.center().y(), delta=1)
+        self.assertLess(wide.card.width(), 1800)
+        self.assertGreater(wide.card.width(), normal.card.width())
+        resource_card = responsive_card_rect(QRect(0, 0, 2500, 82))
+        self.assertLess(resource_card.width(), 1800)
+
+    def test_timeline_toggle_animates_immediately_and_can_reverse(self):
+        delegate = TimelineDelegate("dark")
+        when = datetime(2026, 11, 25, 8, 0)
+        item = {"label": "MAA1", "datetime": when, "original_datetime": when, "skipped": False}
+        self.assertEqual(delegate.toggle_progress(item), 1.0)
+        delegate.animate_toggle(item, False)
+        process_events(55)
+        self.assertLess(delegate.toggle_progress(item), 1.0)
+        process_events(160)
+        self.assertAlmostEqual(delegate.toggle_progress(item), 0.0, delta=0.02)
+        delegate.animate_toggle(item, True)
+        process_events(180)
+        self.assertAlmostEqual(delegate.toggle_progress(item), 1.0, delta=0.02)
 
     def test_schedule_model_replaces_rows_atomically(self):
         model = ScheduleModel()
@@ -244,6 +286,39 @@ class GuiV2Tests(unittest.TestCase):
             process_events(80)
             page.close()
 
+    def test_blocked_wheel_tail_is_consumed_instead_of_replayed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base_dir = Path(temporary)
+            (base_dir / "config").mkdir(parents=True)
+            (base_dir / "state").mkdir()
+            (base_dir / "config" / "config.json").write_text(
+                json.dumps({"maa_schedule": {}, "maa_instance_dirs": {}}), encoding="utf-8"
+            )
+            page = SchedulePage(base_dir, {})
+            QThreadPool.globalInstance().waitForDone(3000)
+            process_events(100)
+            page._loading = False
+            page._edge_lock = False
+            page._wheel_blocked = True
+            page._extension_direction = 1
+            before = page.list_view.verticalScrollBar().value()
+            for _ in range(3):
+                event = QWheelEvent(
+                    QPointF(20, 20),
+                    QPointF(20, 20),
+                    QPoint(),
+                    QPoint(0, -120),
+                    Qt.MouseButton.NoButton,
+                    Qt.KeyboardModifier.NoModifier,
+                    Qt.ScrollPhase.NoScrollPhase,
+                    False,
+                )
+                QApplication.sendEvent(page.list_view.viewport(), event)
+            self.assertEqual(page.list_view.verticalScrollBar().value(), before)
+            self.assertTrue(page._wheel_blocked)
+            self.assertTrue(page._wheel_quiet_timer.isActive())
+            page.close()
+
     def test_schedule_card_toggle_worker_only_changes_supervision_override(self):
         with tempfile.TemporaryDirectory() as temporary:
             base_dir = Path(temporary)
@@ -355,6 +430,9 @@ class GuiV2Tests(unittest.TestCase):
             schedule = window._pages["schedule"]
             window.show_page("resources")
             resources = window._pages["resources"]
+            self.assertEqual(schedule.list_view.horizontalScrollBarPolicy(), Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            self.assertEqual(resources.anomalies.horizontalScrollBarPolicy(), Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            self.assertEqual(resources.history_splitter.count(), 2)
             chosen = date(2026, 11, 20)
             resources.request_day(chosen)
             window.show_page("schedule")
@@ -365,6 +443,34 @@ class GuiV2Tests(unittest.TestCase):
             window.close()
             process_events(100)
         QThreadPool.globalInstance().waitForDone(3000)
+
+    def test_navigation_collapse_uses_icons_and_page_state_is_persisted(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base_dir = Path(temporary)
+            state = AppState(base_dir)
+            page_state = state.page_state("resources")
+            page_state["splitter_sizes"] = [420, 260]
+            state.flush()
+            restored = AppState(base_dir)
+            self.assertEqual(restored.page_state("resources")["splitter_sizes"], [420, 260])
+            restored.flush()
+
+        with tempfile.TemporaryDirectory() as temporary:
+            base_dir = Path(temporary)
+            (base_dir / "config").mkdir(parents=True)
+            (base_dir / "state").mkdir(parents=True)
+            (base_dir / "metadata").mkdir(parents=True)
+            (base_dir / "metadata" / "VERSION").write_text("2.0.0", encoding="utf-8")
+            (base_dir / "config" / "config.json").write_text(
+                json.dumps({"maa_instance_dirs": {}, "maa_schedule": {}}), encoding="utf-8"
+            )
+            window = MainWindow(base_dir)
+            window.navigation._toggle_collapsed()
+            for button in window.navigation._buttons.values():
+                self.assertEqual(button.text(), "")
+                self.assertFalse(button.icon().isNull())
+                self.assertTrue(button.toolTip())
+            window.close()
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ import json
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QRunnable, QThreadPool, QTimer, Qt, Signal
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, QPoint, QRunnable, QThreadPool, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
@@ -97,11 +97,12 @@ class SchedulePage(QWidget):
         self._active_request_id = 0
         self._override_workers: set[_OverrideWorker] = set()
         self._pending_override_keys: set[tuple] = set()
+        self._pending_toggle_items: dict[tuple, tuple[dict, bool]] = {}
         self._override_pool = QThreadPool(self)
         self._override_pool.setMaxThreadCount(1)
         self._wheel_quiet_timer = QTimer(self)
         self._wheel_quiet_timer.setSingleShot(True)
-        self._wheel_quiet_timer.setInterval(280)
+        self._wheel_quiet_timer.setInterval(460)
         self._wheel_quiet_timer.timeout.connect(self._release_wheel_block)
         self.service = ScheduleService(self.base_dir, parent=self)
         self.service.loaded.connect(self._on_loaded)
@@ -113,6 +114,7 @@ class SchedulePage(QWidget):
         self.delegate.move_requested.connect(self.move_occurrence)
         self.delegate.clear_requested.connect(self.clear_occurrence)
         self._build_ui()
+        self.delegate.repaint_requested.connect(self.list_view.viewport().update)
         initial_anchor = (
             datetime.now()
             if self.selected_day == date.today()
@@ -130,6 +132,8 @@ class SchedulePage(QWidget):
         toolbar = QHBoxLayout()
         previous = QPushButton("‹")
         next_button = QPushButton("›")
+        previous.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        next_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         previous.clicked.connect(lambda: self.set_day(self.selected_day - timedelta(days=1)))
         next_button.clicked.connect(lambda: self.set_day(self.selected_day + timedelta(days=1)))
         toolbar.addWidget(previous)
@@ -138,6 +142,7 @@ class SchedulePage(QWidget):
         toolbar.addWidget(self.date_picker)
         toolbar.addWidget(next_button)
         now_button = QPushButton("回到现在")
+        now_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         now_button.clicked.connect(lambda: self.set_day(date.today()))
         toolbar.addWidget(now_button)
         toolbar.addStretch(1)
@@ -151,8 +156,11 @@ class SchedulePage(QWidget):
         self.list_view = QListView()
         self.list_view.setModel(self.model)
         self.list_view.setItemDelegate(self.delegate)
-        self.list_view.setSelectionMode(QListView.SelectionMode.SingleSelection)
+        self.list_view.setSelectionMode(QListView.SelectionMode.NoSelection)
+        self.list_view.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.list_view.setVerticalScrollMode(QListView.ScrollMode.ScrollPerPixel)
+        self.list_view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.list_view.setResizeMode(QListView.ResizeMode.Adjust)
         self.list_view.setUniformItemSizes(True)
         self.list_view.viewport().installEventFilter(self)
         self.list_view.verticalScrollBar().valueChanged.connect(self._on_scroll)
@@ -202,6 +210,7 @@ class SchedulePage(QWidget):
             self.model.set_rows(snapshot.rows)
         else:
             update_kind = self.model.sync_rows(snapshot.rows)
+        self.delegate.sync_toggle_states(self.model.rows())
         self.status.setText(f"已加载 {snapshot.start:%m-%d} 至 {snapshot.end:%m-%d} · {len(snapshot.rows)} 个计划")
         if mode == "reset":
             target = context.get("anchor_datetime") or datetime.now()
@@ -224,6 +233,7 @@ class SchedulePage(QWidget):
         self._loading = False
         self._edge_lock = False
         if mode.startswith("extend"):
+            QCoreApplication.removePostedEvents(self.list_view.viewport(), QEvent.Type.Wheel)
             self._wheel_quiet_timer.start()
         else:
             self._cancel_wheel_block()
@@ -347,10 +357,11 @@ class SchedulePage(QWidget):
         self._extension_direction = 0
 
     def toggle_occurrence(self, item: dict, enabled: bool) -> None:
-        if enabled:
-            self._submit_override(item, "clear", None)
-        else:
-            self._submit_override(item, "skip", None)
+        action = "clear" if enabled else "skip"
+        if self._submit_override(item, action, None):
+            key = schedule_row_key(item)
+            self._pending_toggle_items[key] = (dict(item), not bool(item.get("skipped")))
+            self.delegate.animate_toggle(item, enabled)
 
     def move_occurrence(self, item: dict) -> None:
         default = item["datetime"].strftime("%Y-%m-%d %H:%M")
@@ -368,21 +379,23 @@ class SchedulePage(QWidget):
         if item.get("override"):
             self._submit_override(item, "clear", None)
 
-    def _submit_override(self, item: dict, action: str, target: datetime | None) -> None:
+    def _submit_override(self, item: dict, action: str, target: datetime | None) -> bool:
         key = schedule_row_key(item)
         if key in self._pending_override_keys:
             self.status.setText("这条计划的调整正在保存，请稍候。")
-            return
+            return False
         worker = _OverrideWorker(self.base_dir, dict(item), action, target)
         self._override_workers.add(worker)
         self._pending_override_keys.add(key)
         worker.signals.done.connect(lambda message, task=worker, item_key=key: self._override_finished(task, item_key, message))
         worker.signals.failed.connect(lambda message, task=worker, item_key=key: self._override_failed(task, item_key, message))
         self._override_pool.start(worker)
+        return True
 
     def _override_finished(self, worker: _OverrideWorker, key: tuple, message: str) -> None:
         self._override_workers.discard(worker)
         self._pending_override_keys.discard(key)
+        self._pending_toggle_items.pop(key, None)
         self.status.setText(message)
         active = self._request_contexts.get(self._active_request_id, {})
         if active.get("mode") == "reset":
@@ -394,4 +407,10 @@ class SchedulePage(QWidget):
     def _override_failed(self, worker: _OverrideWorker, key: tuple, message: str) -> None:
         self._override_workers.discard(worker)
         self._pending_override_keys.discard(key)
+        pending = self._pending_toggle_items.pop(key, None)
+        if pending is not None:
+            item, original_enabled = pending
+            self.delegate.animate_toggle(item, original_enabled)
+            QTimer.singleShot(180, lambda: self.delegate.sync_toggle_states(self.model.rows()))
+        self.status.setText(f"调整失败：{message}")
         QMessageBox.warning(self, "调整失败", message)

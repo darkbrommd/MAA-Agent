@@ -191,6 +191,10 @@ class MainWindow(QMainWindow):
         self._set_refresh_visibility(False)
         super().hideEvent(event)
 
+    def closeEvent(self, event) -> None:
+        self.app_state.flush()
+        super().closeEvent(event)
+
     def _set_refresh_visibility(self, visible: bool) -> None:
         self.refresh_manager.set_window_visible(visible)
         if hasattr(self, "process_timer"):

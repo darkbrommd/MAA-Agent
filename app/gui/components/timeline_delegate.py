@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PySide6.QtCore import QEvent, QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QEasingCurve, QEvent, QRect, QRectF, QSize, Qt, QVariantAnimation, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
-from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
+from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
 
 from gui.models.schedule_model import ScheduleModel
+from gui.models.schedule_model import schedule_row_key
+from gui.components.responsive_layout import responsive_card_rect
 from gui.themes.tokens import DARK, LIGHT, ThemeTokens
 
 
@@ -27,7 +29,7 @@ class CardLayout:
 
 def compute_card_layout(rect: QRect | QRectF, item: dict) -> CardLayout:
     """Return every painted and clickable rectangle from one shared calculation."""
-    bounds = QRectF(rect).adjusted(8, 5, -8, -5)
+    bounds = responsive_card_rect(rect, horizontal_margin=8, vertical_margin=5)
     left = bounds.left() + 18
     right = bounds.right() - 14
     button_width = 92
@@ -49,9 +51,9 @@ def compute_card_layout(rect: QRect | QRectF, item: dict) -> CardLayout:
     cursor += 1
     clear_button = button_rects[cursor] if item.get("override") else QRectF()
 
-    toggle = QRectF(left, bounds.center().y() - 12, 42, 24)
+    toggle = QRectF(left, bounds.top() + 14, 42, 24)
     time_left = toggle.right() + 14
-    time = QRectF(time_left, bounds.top() + 15, 76, 31)
+    time = QRectF(time_left, bounds.top() + 11, 76, 30)
     text_left = time.right() + 12
     text_right = button_left - 14
     badge_width = min(92.0, max(74.0, (text_right - text_left) * 0.28))
@@ -62,7 +64,7 @@ def compute_card_layout(rect: QRect | QRectF, item: dict) -> CardLayout:
         rail=QRectF(bounds.left(), bounds.top() + 8, 5, max(10, bounds.height() - 16)),
         toggle=toggle,
         time=time,
-        title=QRectF(text_left, bounds.top() + 12, max(20, text_right - text_left), 25),
+        title=QRectF(text_left, bounds.top() + 11, max(20, text_right - text_left), 30),
         subtitle=QRectF(text_left, bounds.top() + 41, max(20, text_right - text_left), 21),
         state_badge=state_badge,
         status=status,
@@ -77,16 +79,77 @@ class TimelineDelegate(QStyledItemDelegate):
     monitor_toggled = Signal(object, bool)
     move_requested = Signal(object)
     clear_requested = Signal(object)
+    repaint_requested = Signal()
 
     def __init__(self, theme: str = "dark", parent=None):
         super().__init__(parent)
         self.tokens: ThemeTokens = DARK if theme == "dark" else LIGHT
+        self._toggle_progress: dict[tuple, float] = {}
+        self._toggle_targets: dict[tuple, bool] = {}
+        self._toggle_animations: dict[tuple, QVariantAnimation] = {}
 
     def set_theme(self, theme: str) -> None:
         self.tokens = DARK if theme == "dark" else LIGHT
 
     def sizeHint(self, option: QStyleOptionViewItem, index) -> QSize:
-        return QSize(max(520, option.rect.width()), 122)
+        return QSize(1, 122)
+
+    @staticmethod
+    def _blend(start: str, end: str, progress: float) -> QColor:
+        first = QColor(start)
+        second = QColor(end)
+        value = max(0.0, min(1.0, progress))
+        return QColor(
+            round(first.red() + (second.red() - first.red()) * value),
+            round(first.green() + (second.green() - first.green()) * value),
+            round(first.blue() + (second.blue() - first.blue()) * value),
+        )
+
+    def toggle_progress(self, item: dict) -> float:
+        key = schedule_row_key(item)
+        return self._toggle_progress.get(key, 0.0 if item.get("skipped") else 1.0)
+
+    def animate_toggle(self, item: dict, enabled: bool) -> None:
+        key = schedule_row_key(item)
+        start = self.toggle_progress(item)
+        old = self._toggle_animations.pop(key, None)
+        if old is not None:
+            old.stop()
+            old.deleteLater()
+        self._toggle_targets[key] = enabled
+        animation = QVariantAnimation(self)
+        animation.setDuration(140)
+        animation.setStartValue(start)
+        animation.setEndValue(1.0 if enabled else 0.0)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        animation.valueChanged.connect(lambda value, item_key=key: self._set_toggle_progress(item_key, float(value)))
+        animation.finished.connect(lambda item_key=key, task=animation: self._finish_toggle_animation(item_key, task))
+        self._toggle_animations[key] = animation
+        animation.start()
+
+    def _set_toggle_progress(self, key: tuple, value: float) -> None:
+        self._toggle_progress[key] = value
+        self.repaint_requested.emit()
+
+    def _finish_toggle_animation(self, key: tuple, animation: QVariantAnimation) -> None:
+        if self._toggle_animations.get(key) is animation:
+            self._toggle_animations.pop(key, None)
+        animation.deleteLater()
+        self.repaint_requested.emit()
+
+    def sync_toggle_states(self, rows: tuple[dict, ...]) -> None:
+        """Release optimistic animation state after the worker result reaches the model."""
+        actual = {schedule_row_key(item): not bool(item.get("skipped")) for item in rows}
+        for key, target in tuple(self._toggle_targets.items()):
+            if actual.get(key) != target:
+                continue
+            animation = self._toggle_animations.pop(key, None)
+            if animation is not None:
+                animation.stop()
+                animation.deleteLater()
+            self._toggle_targets.pop(key, None)
+            self._toggle_progress.pop(key, None)
+        self.repaint_requested.emit()
 
     def _state_colors(self, state: str) -> tuple[str, str]:
         tokens = self.tokens
@@ -124,20 +187,14 @@ class TimelineDelegate(QStyledItemDelegate):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(accent))
         painter.drawRoundedRect(layout.rail, 2.5, 2.5)
-        if option.state & QStyle.StateFlag.State_Selected:
-            painter.setPen(QPen(QColor(tokens.accent), 2))
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawRoundedRect(layout.card.adjusted(1, 1, -1, -1), 9, 9)
-
-        enabled = not bool(item.get("skipped"))
-        track_color = tokens.success if enabled else tokens.disabled_background
-        painter.setPen(QPen(QColor(tokens.success if enabled else tokens.border), 1))
-        painter.setBrush(QColor(track_color))
+        progress = self.toggle_progress(item)
+        painter.setPen(QPen(self._blend(tokens.border, tokens.success, progress), 1))
+        painter.setBrush(self._blend(tokens.disabled_background, tokens.success, progress))
         painter.drawRoundedRect(layout.toggle, 12, 12)
         knob_size = layout.toggle.height() - 6
-        knob_x = layout.toggle.right() - knob_size - 3 if enabled else layout.toggle.left() + 3
+        knob_x = layout.toggle.left() + 3 + (layout.toggle.width() - knob_size - 6) * progress
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor("#FFFFFF" if enabled else tokens.disabled_text))
+        painter.setBrush(self._blend(tokens.disabled_text, "#FFFFFF", progress))
         painter.drawEllipse(QRectF(knob_x, layout.toggle.top() + 3, knob_size, knob_size))
 
         painter.setPen(QColor(accent))
