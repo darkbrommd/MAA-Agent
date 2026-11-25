@@ -58,6 +58,11 @@ class NewsMonitorTests(unittest.TestCase):
         self.assertFalse(cleaned.startswith(title))
         self.assertTrue(summary.endswith(("。", "！", "？", "；")))
 
+    def test_article_cleanup_keeps_body_when_navigation_precedes_it(self):
+        cleaned = news_monitor.clean_article_text("INFO 返回列表 GO BACK 正文第一句。正文最后一句。")
+        self.assertIn("正文第一句", cleaned)
+        self.assertTrue(cleaned.endswith("正文最后一句。"))
+
 
 class GuiFormattingTests(unittest.TestCase):
     def test_packaged_about_version_prefers_embedded_executable_version(self):
@@ -321,6 +326,21 @@ class UtilityTests(unittest.TestCase):
         ]}
         self.assertEqual(resource_whitelist.enabled_process_names(current),{"editor.exe"})
         self.assertTrue(resource_whitelist.process_matches(current["resource_whitelist"][1],"Editor.exe","D:\\Tools\\Editor.exe"))
+
+    def test_resource_whitelist_regex_matches_only_full_process_name(self):
+        entry = {"name": "GTA", "process_name": "", "process_regex": ".*GTAV.*", "path": "", "enabled": True}
+        config = {"resource_whitelist": [entry]}
+        normalized = resource_whitelist.normalize_resource_whitelist(config)
+        self.assertEqual(normalized[0]["process_regex"], ".*GTAV.*")
+        self.assertTrue(resource_whitelist.process_matches(entry, "GTAVLauncher.exe", "D:\\Games\\GTAVLauncher.exe"))
+        self.assertFalse(resource_whitelist.process_matches(entry, "RockstarLauncher.exe", "D:\\GTAV\\RockstarLauncher.exe"))
+        self.assertEqual(resource_whitelist.enabled_process_names(config), set())
+        self.assertEqual(len(resource_whitelist.enabled_process_patterns(config)), 1)
+
+    def test_invalid_resource_whitelist_regex_is_safe(self):
+        entry = {"name": "坏规则", "process_regex": "[", "enabled": True}
+        self.assertFalse(resource_whitelist.process_matches(entry, "Game.exe"))
+        self.assertEqual(resource_whitelist.enabled_process_patterns({"resource_whitelist": [entry]}), ())
 
     def test_diagnostic_queue_round_trip(self):
         with tempfile.TemporaryDirectory() as td:

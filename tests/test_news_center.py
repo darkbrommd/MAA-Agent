@@ -153,6 +153,37 @@ class NewsCacheRefreshTests(unittest.TestCase):
         self.assertEqual(items["0001"]["title"], "改名 0001")
         self.assertEqual(items["0001"]["content"], "正文 0001")
 
+    def test_incremental_refresh_repairs_cached_rows_missing_body(self):
+        cached = news_monitor._make_cache_entry(make_row(1, brief="官网截断摘要"))
+        with tempfile.TemporaryDirectory() as td:
+            write_state(td, {"news_items": [cached], "seen_ids": ["0001"]})
+            with patch.object(news_monitor, "fetch_announcements", return_value=[]), \
+                    patch.object(news_monitor, "article_plain_text", return_value="完整正文第一句。完整正文最后一句。") as article:
+                result = news_monitor.refresh_news_cache(Path(td), {"news_timeout_seconds": 1})
+            item = read_state(td)["news_items"][0]
+
+        article.assert_called_once_with("0001", 1.0)
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(item["brief"], "官网截断摘要")
+        self.assertEqual(item["content"], "完整正文第一句。完整正文最后一句。")
+        self.assertEqual(item["summary"], item["content"])
+
+    def test_full_refresh_prioritizes_missing_bodies(self):
+        items = []
+        for number in range(1, 24):
+            item = news_monitor._make_cache_entry(make_row(number))
+            if number <= 20:
+                item["content"] = f"旧正文 {number}"
+            items.append(item)
+        fetched = []
+        with tempfile.TemporaryDirectory() as td:
+            write_state(td, {"news_items": items, "seen_ids": [item["cid"] for item in items]})
+            with patch.object(news_monitor, "fetch_announcements", return_value=[]), \
+                    patch.object(news_monitor, "article_plain_text", side_effect=lambda cid, timeout=15: fetched.append(cid) or f"新正文 {cid}"):
+                news_monitor.refresh_news_cache(Path(td), {"news_timeout_seconds": 1, "news_content_fetch_limit": 3}, full=True)
+
+        self.assertEqual(set(fetched), {"0021", "0022", "0023"})
+
     def test_body_fetch_failure_keeps_metadata(self):
         rows = [make_row(n) for n in range(1, 4)]
 

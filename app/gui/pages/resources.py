@@ -34,7 +34,7 @@ from gui.services.resource_service import ResourceService, ResourceSnapshot
 from gui.themes.tokens import DARK, LIGHT
 from project_paths import config_path
 from resource_history import memory_values
-from resource_whitelist import normalize_resource_whitelist
+from resource_whitelist import normalize_resource_whitelist, valid_process_regex
 
 
 class _ConfigSignals(QObject):
@@ -236,14 +236,16 @@ class ResourcesPage(QWidget):
         whitelist_layout.addWidget(note)
         whitelist_actions = QHBoxLayout()
         self.whitelist_add = QPushButton("添加程序…")
+        self.whitelist_add_regex = QPushButton("添加名称规则…")
         self.whitelist_rename = QPushButton("修改名称")
         self.whitelist_toggle = QPushButton("启用 / 停用")
         self.whitelist_remove = QPushButton("删除")
         self.whitelist_add.clicked.connect(self._add_whitelist)
+        self.whitelist_add_regex.clicked.connect(self._add_regex_whitelist)
         self.whitelist_rename.clicked.connect(self._rename_whitelist)
         self.whitelist_toggle.clicked.connect(self._toggle_whitelist)
         self.whitelist_remove.clicked.connect(self._remove_whitelist)
-        for button in (self.whitelist_add, self.whitelist_rename, self.whitelist_toggle, self.whitelist_remove):
+        for button in (self.whitelist_add, self.whitelist_add_regex, self.whitelist_rename, self.whitelist_toggle, self.whitelist_remove):
             whitelist_actions.addWidget(button)
         whitelist_actions.addStretch(1)
         whitelist_layout.addLayout(whitelist_actions)
@@ -251,6 +253,8 @@ class ResourcesPage(QWidget):
         self.whitelist_status.setObjectName("MutedLabel")
         whitelist_layout.addWidget(self.whitelist_status)
         self.whitelist = QListWidget()
+        self.whitelist.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.whitelist.setWordWrap(True)
         whitelist_layout.addWidget(self.whitelist, 1)
         self.stack.addWidget(whitelist)
         segment = int(self.page_state.get("segment", 0))
@@ -332,7 +336,9 @@ class ResourcesPage(QWidget):
             return
         for index, row in enumerate(self._whitelist_rows):
             enabled = bool(row.get("enabled", True))
-            text = f"{'●' if enabled else '○'}  {row.get('name') or row.get('process_name') or '程序'}\n    {row.get('path') or row.get('process_name') or '未指定路径'}"
+            pattern = str(row.get("process_regex") or "")
+            target = f"名称正则 · {pattern}" if pattern else (row.get("path") or row.get("process_name") or "未指定路径")
+            text = f"{'●' if enabled else '○'}  {row.get('name') or row.get('process_name') or '程序'}\n    {target}"
             item = QListWidgetItem(text)
             item.setData(Qt.ItemDataRole.UserRole, index)
             if not enabled:
@@ -360,6 +366,35 @@ class ResourcesPage(QWidget):
             QMessageBox.information(self, "已经存在", "这个程序已经在资源白名单中。")
             return
         self._whitelist_rows.append({"name": executable.stem, "process_name": executable.name, "path": str(executable), "enabled": True})
+        self._render_whitelist()
+        self.whitelist.setCurrentRow(len(self._whitelist_rows) - 1)
+        self._save_whitelist()
+
+    def _add_regex_whitelist(self) -> None:
+        pattern, accepted = QInputDialog.getText(
+            self,
+            "添加进程名称规则",
+            "正则表达式（匹配完整进程名；例如 .*GTAV.*）：",
+        )
+        pattern = pattern.strip()
+        if not accepted or not pattern:
+            return
+        if not valid_process_regex(pattern):
+            QMessageBox.warning(self, "正则无效", "这个正则表达式无法解析，请检查括号、方括号和反斜杠。")
+            return
+        if any(str(row.get("process_regex") or "").casefold() == pattern.casefold() for row in self._whitelist_rows):
+            QMessageBox.information(self, "已经存在", "这个进程名称规则已经在资源白名单中。")
+            return
+        name, named = QInputDialog.getText(self, "规则显示名称", "显示名称：", text=pattern)
+        if not named:
+            return
+        self._whitelist_rows.append({
+            "name": name.strip() or pattern,
+            "process_name": "",
+            "process_regex": pattern,
+            "path": "",
+            "enabled": True,
+        })
         self._render_whitelist()
         self.whitelist.setCurrentRow(len(self._whitelist_rows) - 1)
         self._save_whitelist()
@@ -416,5 +451,5 @@ class ResourcesPage(QWidget):
             QMessageBox.warning(self, "白名单保存失败", message)
 
     def _set_whitelist_actions_enabled(self, enabled: bool) -> None:
-        for button in (self.whitelist_add, self.whitelist_rename, self.whitelist_toggle, self.whitelist_remove):
+        for button in (self.whitelist_add, self.whitelist_add_regex, self.whitelist_rename, self.whitelist_toggle, self.whitelist_remove):
             button.setEnabled(enabled)

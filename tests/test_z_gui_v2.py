@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -36,6 +37,7 @@ from gui.pages.resources import _WhitelistSaveWorker
 from gui.pages.schedule import SchedulePage, _OverrideWorker
 from gui.resource_paths import resource_path
 from gui.services.dashboard_service import dashboard_source_signature
+from gui.services import agent_control_service
 from gui.services.log_service import line_matches, read_log_chunk
 from gui.services.news_service import NewsSnapshot
 from gui.services.process_service import _build_snapshot
@@ -163,11 +165,18 @@ class GuiV2Tests(unittest.TestCase):
         normal = compute_card_layout(QRect(0, 0, 1200, 122), {"state": "future"})
         wide = compute_card_layout(QRect(0, 0, 2500, 122), {"state": "future"})
         self.assertAlmostEqual(normal.toggle.center().y(), normal.time.center().y(), delta=4)
-        self.assertAlmostEqual(normal.time.center().y(), normal.title.center().y(), delta=1)
+        self.assertAlmostEqual(normal.time.center().y(), normal.card.center().y(), delta=1)
         self.assertLess(wide.card.width(), 1800)
         self.assertGreater(wide.card.width(), normal.card.width())
         resource_card = responsive_card_rect(QRect(0, 0, 2500, 82))
         self.assertLess(resource_card.width(), 1800)
+
+    def test_schedule_day_headers_add_space_without_shifting_card_hit_areas(self):
+        plain = compute_card_layout(QRect(0, 0, 1200, 122), {"state": "future"})
+        headed = compute_card_layout(QRect(0, 0, 1200, 153), {"state": "future", "show_date_header": True})
+        self.assertGreater(headed.card.top(), plain.card.top() + 25)
+        self.assertTrue(headed.card.contains(headed.toggle.center()))
+        self.assertTrue(headed.card.contains(headed.move_button.center()))
 
     def test_timeline_toggle_animates_immediately_and_can_reverse(self):
         delegate = TimelineDelegate("dark")
@@ -382,6 +391,7 @@ class GuiV2Tests(unittest.TestCase):
     def test_process_snapshot_maps_configured_instances_from_one_snapshot(self):
         cfg = {
             "maa_instance_dirs": {"MAA1": "D:/MAA/one"},
+            "maa_instance_aliases": {"MAA1": "方舟主号"},
             "mumu_process_names": ["MuMuPlayer.exe"],
         }
         rows = [
@@ -393,9 +403,30 @@ class GuiV2Tests(unittest.TestCase):
         self.assertTrue(snapshot.agent_running)
         self.assertEqual(snapshot.agent_pid, 13)
         self.assertEqual(snapshot.maa_instances[0].pids, (11,))
+        self.assertEqual(snapshot.maa_instances[0].display_name, "方舟主号（MAA1）")
         self.assertEqual(snapshot.mumu_count, 1)
         self.assertEqual([item.pid for item in snapshot.top_processes], [12, 13, 11])
         self.assertGreaterEqual(snapshot.disk_total_gb, 0)
+
+    def test_agent_control_refuses_duplicate_for_same_installation(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(agent_control_service, "validated_agent_for_dir", return_value={"pid": 321}), \
+                patch.object(agent_control_service.subprocess, "Popen") as launch:
+            ok, message = agent_control_service.start_agent_process(Path(temporary))
+        self.assertFalse(ok)
+        self.assertIn("321", message)
+        launch.assert_not_called()
+
+    def test_agent_restart_starts_only_after_normal_stop(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(agent_control_service, "request_stop", return_value=SimpleNamespace(status="stopped", message="已停止")), \
+                patch.object(agent_control_service, "start_agent_process", return_value=(True, "启动请求已发送。")) as start:
+            worker = agent_control_service._AgentActionWorker(Path(temporary), "restart")
+            results = []
+            worker.signals.done.connect(lambda ok, message: results.append((ok, message)))
+            worker.run()
+        self.assertEqual(results, [(True, "启动请求已发送。")])
+        start.assert_called_once()
 
     def test_log_tail_reads_only_appended_bytes_and_resets_after_truncate(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -518,7 +549,7 @@ class GuiV2Tests(unittest.TestCase):
             path = config_dir / "config.json"
             original = {"bark_key": "keep-me", "resource_whitelist": []}
             path.write_text(json.dumps(original), encoding="utf-8")
-            rows = ({"name": "Game", "process_name": "game.exe", "path": "D:/Game/game.exe", "enabled": True},)
+            rows = ({"name": "GTA 系列", "process_name": "", "process_regex": ".*GTAV.*", "path": "", "enabled": True},)
             results = []
             worker = _WhitelistSaveWorker(base_dir, rows)
             worker.signals.done.connect(lambda ok, message: results.append((ok, message)))
@@ -527,7 +558,7 @@ class GuiV2Tests(unittest.TestCase):
             backup = json.loads(path.with_suffix(".json.bak").read_text(encoding="utf-8"))
             self.assertEqual(results[0][0], True)
             self.assertEqual(saved["bark_key"], "keep-me")
-            self.assertEqual(saved["resource_whitelist"][0]["process_name"], "game.exe")
+            self.assertEqual(saved["resource_whitelist"][0]["process_regex"], ".*GTAV.*")
             self.assertEqual(backup, original)
 
     def test_resource_chart_renders_offscreen(self):

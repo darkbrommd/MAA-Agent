@@ -29,7 +29,10 @@ class CardLayout:
 
 def compute_card_layout(rect: QRect | QRectF, item: dict) -> CardLayout:
     """Return every painted and clickable rectangle from one shared calculation."""
-    bounds = responsive_card_rect(rect, horizontal_margin=8, vertical_margin=5)
+    source = QRectF(rect)
+    if item.get("show_date_header"):
+        source.adjust(0, 31, 0, 0)
+    bounds = responsive_card_rect(source, horizontal_margin=8, vertical_margin=5)
     left = bounds.left() + 18
     right = bounds.right() - 14
     button_width = 92
@@ -51,9 +54,9 @@ def compute_card_layout(rect: QRect | QRectF, item: dict) -> CardLayout:
     cursor += 1
     clear_button = button_rects[cursor] if item.get("override") else QRectF()
 
-    toggle = QRectF(left, bounds.top() + 14, 42, 24)
+    toggle = QRectF(left, bounds.center().y() - 12, 42, 24)
     time_left = toggle.right() + 14
-    time = QRectF(time_left, bounds.top() + 11, 76, 30)
+    time = QRectF(time_left, bounds.center().y() - 20, 82, 40)
     text_left = time.right() + 12
     text_right = button_left - 14
     badge_width = min(92.0, max(74.0, (text_right - text_left) * 0.28))
@@ -92,7 +95,8 @@ class TimelineDelegate(QStyledItemDelegate):
         self.tokens = DARK if theme == "dark" else LIGHT
 
     def sizeHint(self, option: QStyleOptionViewItem, index) -> QSize:
-        return QSize(1, 122)
+        item = index.data(ScheduleModel.ItemRole) or {}
+        return QSize(1, 153 if item.get("show_date_header") else 122)
 
     @staticmethod
     def _blend(start: str, end: str, progress: float) -> QColor:
@@ -181,6 +185,18 @@ class TimelineDelegate(QStyledItemDelegate):
         background, accent = self._state_colors(state)
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        if item.get("show_date_header"):
+            when = item.get("datetime")
+            day_text = when.strftime("%Y年%m月%d日") if when else "日期"
+            weekday = "一二三四五六日"[when.weekday()] if when else ""
+            header = QRectF(option.rect).adjusted(12, 1, -12, -option.rect.height() + 29)
+            painter.setPen(QColor(tokens.text))
+            painter.setFont(QFont("Microsoft YaHei UI", 10, QFont.Weight.DemiBold))
+            painter.drawText(header, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, f"{day_text} · 星期{weekday}")
+            line_left = min(header.right(), header.left() + 154)
+            painter.setPen(QPen(QColor(tokens.border), 1))
+            line = QRectF(line_left, header.center().y(), max(0, header.right() - line_left), 1)
+            painter.drawLine(line.topLeft(), line.topRight())
         painter.setPen(QPen(QColor(tokens.border), 1))
         painter.setBrush(QColor(background))
         painter.drawRoundedRect(layout.card, 10, 10)
@@ -198,12 +214,12 @@ class TimelineDelegate(QStyledItemDelegate):
         painter.drawEllipse(QRectF(knob_x, layout.toggle.top() + 3, knob_size, knob_size))
 
         painter.setPen(QColor(accent))
-        painter.setFont(QFont("Segoe UI", 16, QFont.Weight.DemiBold))
+        painter.setFont(QFont("Segoe UI", 19, QFont.Weight.Bold))
         when = item.get("datetime")
-        painter.drawText(layout.time, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, when.strftime("%H:%M") if when else "--:--")
+        painter.drawText(layout.time, Qt.AlignmentFlag.AlignCenter, when.strftime("%H:%M") if when else "--:--")
         painter.setPen(QColor(tokens.text))
         painter.setFont(QFont("Microsoft YaHei UI", 11, QFont.Weight.DemiBold))
-        painter.drawText(layout.title, Qt.AlignmentFlag.AlignVCenter, str(item.get("label") or "计划"))
+        painter.drawText(layout.title, Qt.AlignmentFlag.AlignVCenter, str(item.get("display_label") or item.get("label") or "计划"))
         painter.setPen(QColor(tokens.muted))
         painter.setFont(QFont("Microsoft YaHei UI", 9))
         day_text = when.strftime("%Y-%m-%d") if when else ""

@@ -24,7 +24,7 @@ QPushButton:pressed, QToolButton:pressed {{ background: {disabled_background}; }
 QPushButton:checked, QToolButton:checked {{ background: {disabled_background}; border-color: {accent}; }}
 QPushButton:disabled, QToolButton:disabled {{ color: {disabled_text}; background: {disabled_background}; }}
 QPushButton#PrimaryButton {{ background: {accent}; color: white; border-color: {accent}; }}
-QPushButton#NavButton {{ text-align: left; padding: 9px 12px; border-color: transparent; background: transparent; }}
+QPushButton#NavButton {{ text-align: left; padding: 9px 12px; border-color: transparent; background: transparent; font-size: 14px; }}
 QPushButton#NavButton:checked {{ background: {card}; color: {accent}; border-color: {border}; }}
 QPushButton#NavButton[compact="true"] {{ text-align: center; padding: 9px 0; }}
 QLabel#MutedLabel {{ color: {muted}; }}

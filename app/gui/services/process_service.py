@@ -13,6 +13,7 @@ from project_paths import config_path
 @dataclass(frozen=True)
 class InstanceProcessState:
     label: str
+    display_name: str
     running: bool
     pids: tuple[int, ...]
 
@@ -86,6 +87,7 @@ def _path_is_below(executable: str, directory: str) -> bool:
 
 def _build_snapshot(cfg: dict, rows: list[dict], disk_path: Path | None = None) -> ProcessSnapshot:
     instance_dirs = {str(key): str(value) for key, value in (cfg.get("maa_instance_dirs") or {}).items()}
+    aliases = {str(key): str(value).strip() for key, value in (cfg.get("maa_instance_aliases") or {}).items()}
     instance_pids: dict[str, list[int]] = {label: [] for label in instance_dirs}
     mumu_names = {str(value).lower() for value in (cfg.get("mumu_process_names") or ())}
     agent_pid = None
@@ -131,7 +133,12 @@ def _build_snapshot(cfg: dict, rows: list[dict], disk_path: Path | None = None) 
         agent_running=agent_pid is not None,
         agent_pid=agent_pid,
         maa_instances=tuple(
-            InstanceProcessState(label, bool(instance_pids[label]), tuple(instance_pids[label]))
+            InstanceProcessState(
+                label,
+                f"{aliases[label]}（{label}）" if aliases.get(label) else label,
+                bool(instance_pids[label]),
+                tuple(instance_pids[label]),
+            )
             for label in sorted(instance_pids)
         ),
         mumu_count=mumu_count,

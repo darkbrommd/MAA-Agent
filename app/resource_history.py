@@ -14,7 +14,7 @@ from pathlib import Path
 
 import psutil
 
-from resource_whitelist import enabled_process_names
+from resource_whitelist import enabled_process_names, enabled_process_patterns
 
 
 def operational_date(moment: datetime, start_hour: int = 4):
@@ -37,7 +37,7 @@ def _normal_name(value: str) -> str:
     return name[:-4] if name.endswith(".exe") else name
 
 
-def _category(name: str, cmdline: list[str], maa_names: set[str], mumu_names: set[str], heavy_names: set[str]) -> tuple[str, str]:
+def _category(name: str, cmdline: list[str], maa_names: set[str], mumu_names: set[str], heavy_names: set[str], heavy_patterns=()) -> tuple[str, str]:
     lower = (name or "").lower()
     normal = _normal_name(lower)
     command = " ".join(str(x).lower() for x in (cmdline or []))
@@ -49,6 +49,8 @@ def _category(name: str, cmdline: list[str], maa_names: set[str], mumu_names: se
         return "agent", "MAA Agent"
     if lower in heavy_names or normal in {_normal_name(x) for x in heavy_names}:
         return "heavy_known", name or normal
+    if any(pattern.fullmatch(str(name or "")) for pattern in heavy_patterns):
+        return "heavy_known", name or normal
     return "other", name or normal
 
 
@@ -56,6 +58,7 @@ def _process_snapshot(cfg: dict, *, process_limit: int = 20, app_limit: int = 12
     maa_names = {str(x).lower() for x in cfg.get("maa_process_names", ["MAA.exe"])}
     mumu_names = {str(x).lower() for x in cfg.get("mumu_process_names", [])}
     heavy_names = enabled_process_names(cfg)
+    heavy_patterns = enabled_process_patterns(cfg)
     processes: list[dict] = []
     groups: dict[tuple[str, str], dict] = defaultdict(lambda: {"mb": 0.0, "count": 0})
     agent_mb = 0.0
@@ -66,7 +69,7 @@ def _process_snapshot(cfg: dict, *, process_limit: int = 20, app_limit: int = 12
             if mb <= 0:
                 continue
             name = proc.info.get("name") or f"PID {proc.pid}"
-            category, app_name = _category(name, proc.info.get("cmdline") or [], maa_names, mumu_names, heavy_names)
+            category, app_name = _category(name, proc.info.get("cmdline") or [], maa_names, mumu_names, heavy_names, heavy_patterns)
             processes.append({"pid": proc.pid, "name": name, "mb": round(mb, 1), "category": category})
             key = (category, app_name)
             groups[key]["mb"] += mb

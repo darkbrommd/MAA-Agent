@@ -72,6 +72,8 @@ class NewsPage(QWidget):
         self.list.setAlternatingRowColors(False)
         self.list.setWordWrap(True)
         self.list.setSpacing(4)
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.list.setResizeMode(QListView.ResizeMode.Adjust)
         self.list.selectionModel().currentChanged.connect(self._show_current)
         self.detail = QTextBrowser()
         self.detail.setOpenExternalLinks(False)
@@ -144,11 +146,12 @@ class NewsPage(QWidget):
         self.page_state["selected_cid"] = str(item.get("cid") or "")
         title = escape(str(item.get("title") or "官网公告"))
         when = escape(str(item.get("display_time") or item.get("published_at") or "时间未知"))
-        brief = escape(str(item.get("brief") or item.get("summary") or "暂无摘要")).replace("\n", "<br>")
+        brief = escape(str(item.get("brief") or "暂无摘要")).replace("\n", "<br>")
         body = escape(str(item.get("body") or item.get("content") or "")).replace("\n", "<br>")
         url = escape(str(item.get("url") or ""), quote=True)
         link = f'<p><a href="{url}">在浏览器打开原文</a></p>' if url else ""
-        self.detail.setHtml(f"<h2>{title}</h2><p>{when}</p><p>{brief}</p>{body and f'<hr><p>{body}</p>'}{link}")
+        content = f"<p>{body}</p>" if body else f'<p>{brief}</p><p><i>本地还没有完整正文，可点击“增量更新”补齐。</i></p>'
+        self.detail.setHtml(f"<h2>{title}</h2><p>{when}</p>{content}{link}")
 
     def _progress(self, current: int, total: int, message: str) -> None:
         prefix = f"{current}/{total} · " if total else ""

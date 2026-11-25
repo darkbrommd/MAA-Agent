@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import re
 import time
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, Qt, Signal
+from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Qt, Signal, QSize
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -25,9 +26,78 @@ from gui.components.resource_chart import ResourceChart
 from gui.services.dashboard_service import DashboardService, DashboardSnapshot
 from gui.services.log_service import LogChunk, LogService, line_matches
 from gui.services.process_service import ProcessSnapshot
+from project_paths import config_path
+from schedule_utils import add_override, remove_override
 
 
 _LOG_TIME = re.compile(r"^\[?(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})")
+
+
+class _OverviewProcessCard(QFrame):
+    def __init__(self, rank: int, parent=None):
+        super().__init__(parent)
+        self.setObjectName("Card")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 11, 14, 11)
+        layout.setSpacing(4)
+        heading = QLabel(f"内存占用 #{rank}")
+        heading.setObjectName("MutedLabel")
+        layout.addWidget(heading)
+        self.name = QLabel("读取中…")
+        self.name.setStyleSheet("font-size: 15px; font-weight: 600;")
+        layout.addWidget(self.name)
+        self.value = QLabel("—")
+        self.value.setObjectName("MutedLabel")
+        layout.addWidget(self.value)
+
+    def set_process(self, process=None) -> None:
+        if process is None:
+            self.name.setText("暂无数据")
+            self.value.setText("—")
+            return
+        self.name.setText(process.name)
+        self.value.setText(f"{process.memory_mb / 1024:.2f} GB · PID {process.pid}" if process.memory_mb >= 1024 else f"{process.memory_mb:.0f} MB · PID {process.pid}")
+
+
+class _DashboardOverrideSignals(QObject):
+    done = Signal(str)
+    failed = Signal(str)
+
+
+class _DashboardOverrideWorker(QRunnable):
+    def __init__(self, base_dir: Path, item: dict):
+        super().__init__()
+        self.base_dir = base_dir
+        self.item = dict(item)
+        self.signals = _DashboardOverrideSignals()
+
+    def run(self) -> None:
+        try:
+            cfg = json.loads(config_path(self.base_dir).read_text(encoding="utf-8-sig"))
+            if self.item.get("skipped"):
+                override = self.item.get("override") or {}
+                removed = remove_override(self.base_dir, cfg, override_id=override.get("id"))
+                if not removed:
+                    remove_override(
+                        self.base_dir,
+                        cfg,
+                        label=str(self.item["label"]),
+                        original_dt=self.item.get("original_datetime") or self.item["datetime"],
+                    )
+                message = "已恢复本次监督；MAA 定时器没有修改。"
+            else:
+                add_override(
+                    self.base_dir,
+                    cfg,
+                    str(self.item["label"]),
+                    self.item.get("original_datetime") or self.item["datetime"],
+                    "skip",
+                    note="MAA Agent 2.0 总览",
+                )
+                message = "已关闭本次监督；MAA 定时器没有修改。"
+            self.signals.done.emit(message)
+        except Exception as exc:
+            self.signals.failed.emit(str(exc))
 
 
 class DashboardPage(QWidget):
@@ -40,6 +110,7 @@ class DashboardPage(QWidget):
         self._theme = theme
         self._last_static_refresh = 0.0
         self._log_lines: list[str] = []
+        self._override_workers: set[_DashboardOverrideWorker] = set()
         self._build_ui()
         self.dashboard_service = DashboardService(self.base_dir, parent=self)
         self.dashboard_service.loaded.connect(self._apply_dashboard)
@@ -65,16 +136,12 @@ class DashboardPage(QWidget):
 
         metrics = QHBoxLayout()
         metrics.setSpacing(12)
-        self.cpu_card = MetricCard("CPU", "cpu")
         self.memory_card = MetricCard("内存", "memory")
-        self.disk_card = MetricCard("磁盘", "disk")
-        for card in (self.cpu_card, self.memory_card, self.disk_card):
+        metrics.addWidget(self.memory_card, 2)
+        self.process_cards = tuple(_OverviewProcessCard(index) for index in range(1, 4))
+        for card in self.process_cards:
             metrics.addWidget(card, 1)
         root.addLayout(metrics)
-        self.top_processes = QLabel("内存大户：读取中")
-        self.top_processes.setObjectName("MutedLabel")
-        self.top_processes.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        root.addWidget(self.top_processes)
 
         self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.main_splitter.setChildrenCollapsible(False)
@@ -154,28 +221,59 @@ class DashboardPage(QWidget):
                 self._last_static_refresh = now
 
     def update_process_snapshot(self, snapshot: ProcessSnapshot) -> None:
-        self.cpu_card.set_metric(snapshot.cpu_percent, f"{snapshot.cpu_percent:.0f}%", "当前处理器负载")
         self.memory_card.set_metric(snapshot.memory_percent, f"{snapshot.memory_percent:.0f}%", f"已用 {snapshot.memory_used_gb:.1f} GB")
-        self.disk_card.set_metric(
-            snapshot.disk_percent,
-            f"{snapshot.disk_percent:.0f}%",
-            f"{snapshot.disk_used_gb:.0f} / {snapshot.disk_total_gb:.0f} GB" if snapshot.disk_total_gb else "暂不可用",
-        )
-        values = [f"{item.name} {item.memory_mb:.0f} MB" for item in snapshot.top_processes]
-        self.top_processes.setText("内存大户：" + (" · ".join(values) if values else "暂无数据"))
+        for index, card in enumerate(self.process_cards):
+            card.set_process(snapshot.top_processes[index] if index < len(snapshot.top_processes) else None)
 
     def _apply_dashboard(self, snapshot: DashboardSnapshot) -> None:
         self.schedule_list.clear()
         for row in snapshot.schedule_rows:
             when = row.get("datetime")
             time_text = when.strftime("%m-%d %H:%M") if isinstance(when, datetime) else str(when or "")
-            item = QListWidgetItem(f"{time_text}  {row.get('label', '')}\n{row.get('status_title', '')} · {row.get('status_detail', '')}")
+            item = QListWidgetItem()
             item.setData(Qt.ItemDataRole.UserRole, row)
+            item.setSizeHint(QSize(1, 72))
             self.schedule_list.addItem(item)
+            widget = QWidget()
+            layout = QHBoxLayout(widget)
+            layout.setContentsMargins(8, 5, 8, 5)
+            text = QLabel(
+                f"{time_text}  {row.get('display_label') or row.get('label', '')}\n"
+                f"{row.get('status_title', '')} · {row.get('status_detail', '')}"
+            )
+            text.setWordWrap(True)
+            layout.addWidget(text, 1)
+            toggle = QPushButton("恢复监测" if row.get("skipped") else "关闭本次")
+            toggle.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            toggle.setToolTip("只调整 Agent 对这一次计划的监督预期，不修改 MAA 定时器。")
+            toggle.clicked.connect(lambda _checked=False, value=dict(row), button=toggle: self._toggle_plan(value, button))
+            layout.addWidget(toggle)
+            self.schedule_list.setItemWidget(item, widget)
         if not snapshot.schedule_rows:
             self.schedule_list.addItem("未来 36 小时没有计划")
         self.chart.set_data(snapshot.resource_rows, snapshot.day)
         self.status_label.setText(f"已更新 · {datetime.now():%H:%M:%S}")
+
+    def _toggle_plan(self, item: dict, button: QPushButton) -> None:
+        button.setEnabled(False)
+        button.setText("正在保存…")
+        worker = _DashboardOverrideWorker(self.base_dir, item)
+        self._override_workers.add(worker)
+        worker.signals.done.connect(lambda message, task=worker: self._override_finished(task, message))
+        worker.signals.failed.connect(lambda message, task=worker: self._override_failed(task, message))
+        QThreadPool.globalInstance().start(worker)
+
+    def _override_finished(self, worker: _DashboardOverrideWorker, message: str) -> None:
+        self._override_workers.discard(worker)
+        self.status_label.setText(message)
+        self._last_static_refresh = 0.0
+        self.refresh_tick(force=True)
+
+    def _override_failed(self, worker: _DashboardOverrideWorker, message: str) -> None:
+        self._override_workers.discard(worker)
+        self.status_label.setText(f"监督设置保存失败：{message}")
+        self._last_static_refresh = 0.0
+        self.refresh_tick(force=True)
 
     def _apply_log_chunk(self, chunk: LogChunk) -> None:
         incoming = chunk.text.splitlines()

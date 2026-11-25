@@ -108,6 +108,11 @@ def decorate_schedule_rows(
                 state, title, detail = "next", "下一个计划", "即将执行"
         row.update(state=state, status_title=title, status_detail=detail, error=error)
         output.append(row)
+    previous_day = None
+    for row in output:
+        current_day = row["datetime"].date()
+        row["show_date_header"] = current_day != previous_day
+        previous_day = current_day
     return tuple(output)
 
 
@@ -139,6 +144,10 @@ class _ScheduleWorker(QRunnable):
                 if (state_dir / f"scheduled_alert_{digest}.txt").exists():
                     alerted.add(occurrence_key(str(row["label"]), row["datetime"]))
             decorated = decorate_schedule_rows(rows, run_records, daily_states, alerted, datetime.now())
+            aliases = {str(key): str(value).strip() for key, value in (cfg.get("maa_instance_aliases") or {}).items()}
+            for row in decorated:
+                label = str(row.get("label") or "")
+                row["display_label"] = f"{aliases[label]}（{label}）" if aliases.get(label) else label
             self.signals.done.emit(self.request_id, ScheduleSnapshot(self.start, self.end, decorated, dict(meta)))
         except Exception as exc:
             self.signals.failed.emit(self.request_id, str(exc))

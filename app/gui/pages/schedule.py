@@ -161,7 +161,7 @@ class SchedulePage(QWidget):
         self.list_view.setVerticalScrollMode(QListView.ScrollMode.ScrollPerPixel)
         self.list_view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.list_view.setResizeMode(QListView.ResizeMode.Adjust)
-        self.list_view.setUniformItemSizes(True)
+        self.list_view.setUniformItemSizes(False)
         self.list_view.viewport().installEventFilter(self)
         self.list_view.verticalScrollBar().valueChanged.connect(self._on_scroll)
         root.addWidget(self.list_view, 1)

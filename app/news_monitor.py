@@ -86,10 +86,18 @@ def article_plain_text(cid: str, timeout: float = 15.0) -> str:
 def clean_article_text(text: str) -> str:
     """Remove the official site's page chrome while retaining article prose."""
     value = re.sub(r"\s+", " ", str(text or "")).strip()
-    for marker in (" INFO 返回列表", " 返回列表 GO BACK", " GO BACK 返回首页"):
-        position = value.find(marker)
-        if position >= 0:
-            value = value[:position].rstrip()
+    # Navigation fragments can appear before or after the article depending on
+    # the site's generated page stream.  Removing the tokens is safer than
+    # cutting at the first one, which used to discard valid body text.
+    value = re.sub(
+        r"\s*(?:INFO\s*)?返回列表(?:\s*GO BACK)?(?:\s*返回首页)?"
+        r"|\s*GO BACK(?:\s*返回首页)?"
+        r"|\s*(?:HOMEPAGE|ARKNIGHTS INFORMATION)\s*",
+        " ",
+        value,
+        flags=re.I,
+    )
+    value = re.sub(r"\s+", " ", value).strip()
     # The visible page repeats “title - 明日方舟 公告 title date” before the body.
     value = re.sub(
         r"^(?P<title>.+?)\s*-\s*明日方舟\s+公告\s+(?P=title)\s+"
@@ -288,7 +296,7 @@ def _make_cache_entry(row, existing=None) -> dict | None:
         if isinstance(fetched_at, str) and fetched_at.strip():
             entry["content_fetched_at"] = fetched_at.strip()
     if entry.get("content"):
-        entry["brief"] = article_summary(entry["content"], entry.get("brief", ""))
+        entry["summary"] = article_summary(entry["content"], entry.get("brief", ""))
     return entry
 
 
@@ -412,11 +420,20 @@ def refresh_news_cache(base_dir: Path | str, cfg: dict | None = None, progress=N
     rows = rows if isinstance(rows, list) else []
     items, new_count, first_init = _merge_news_items(cached, rows, limit=limit, initial_limit=initial_limit)
     content_limit = _cfg_positive_int(cfg.get("news_content_fetch_limit"), DEFAULT_NEWS_CONTENT_FETCH_LIMIT)
-    fetched_ids = {str(row.get("cid")) for row in rows if isinstance(row, dict) and row.get("cid")}
+    missing = [entry for entry in items if not str(entry.get("content") or "").strip()]
     if full:
-        pending = items[:content_limit]
+        missing_cids = {str(entry.get("cid") or "") for entry in missing}
+        pending = missing[:content_limit]
+        if len(pending) < content_limit:
+            pending.extend(
+                entry for entry in items
+                if str(entry.get("cid") or "") not in missing_cids
+            )
+            pending = pending[:content_limit]
     else:
-        pending = [entry for entry in items if entry.get("cid") in fetched_ids and not entry.get("content")][:content_limit]
+        # Repair metadata-only cache entries too.  poll() may have seen the
+        # announcement first, so the list endpoint can return zero new rows.
+        pending = missing[:content_limit]
     total_steps = 1 + len(pending)
     _report_progress(progress, 1, total_steps, f"官网公告列表已获取：{len(rows)} 条，新增 {new_count} 条")
 
@@ -430,7 +447,7 @@ def refresh_news_cache(base_dir: Path | str, cfg: dict | None = None, progress=N
             continue
         if plain and str(plain).strip():
             entry["content"] = clean_article_text(plain)
-            entry["brief"] = article_summary(entry["content"], entry.get("brief", ""))
+            entry["summary"] = article_summary(entry["content"], entry.get("brief", ""))
             entry["content_fetched_at"] = stamp
         else:
             errors.append(f"正文为空 {entry['cid']}")
@@ -521,11 +538,14 @@ def poll(base_dir: Path, cfg: dict, *, force: bool = False, now: datetime | None
     new_rows.sort(key=lambda row: float(row.get("displayTime") or 0))
     keywords = [str(x) for x in cfg.get("news_keywords", ["闪断更新", "停机维护"])]
     events = []
+    article_content: dict[str, str] = {}
     for row in new_rows:
         if not maintenance_related(row, keywords):
             continue
         cid = str(row["cid"])
         plain = article_plain_text(cid, float(cfg.get("news_timeout_seconds", 15)))
+        if plain and str(plain).strip():
+            article_content[cid] = clean_article_text(plain)
         window = parse_maintenance_window(plain or str(row.get("brief", "")), row.get("displayTime"))
         changes: list[str] = []
         if window and window[1] >= now:
@@ -549,6 +569,12 @@ def poll(base_dir: Path, cfg: dict, *, force: bool = False, now: datetime | None
         "last_result": f"new={len(new_rows)}, relevant={len(events)}",
         "latest_events": events[-10:],
     })
+    if article_content:
+        rows = [
+            ({**row, "content": article_content[str(row.get("cid"))], "content_fetched_at": now.isoformat(timespec="seconds")}
+             if str(row.get("cid")) in article_content else row)
+            for row in rows
+        ]
     _merge_cache_into_state(state, cfg, rows, now)
     _save_state(state_path, state)
     return {"status": "ok", "slot": slot, "new_count": len(new_rows), "events": events}

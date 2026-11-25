@@ -77,6 +77,10 @@ def load_dashboard_snapshot(base_dir: Path, now: datetime | None = None) -> Dash
         for day in {row["datetime"].date() for row in rows}
     }
     decorated = decorate_schedule_rows(rows, run_records, daily_states, set(), now)[:16]
+    aliases = {str(key): str(value).strip() for key, value in (cfg.get("maa_instance_aliases") or {}).items()}
+    for row in decorated:
+        label = str(row.get("label") or "")
+        row["display_label"] = f"{aliases[label]}（{label}）" if aliases.get(label) else label
     start_hour = int(cfg.get("operational_day_start_hour", 4) or 4)
     resource_rows = resource_history.load_calendar_day(base_dir, now.date(), start_hour)
     return DashboardSnapshot(tuple(decorated), tuple(dict(row) for row in resource_rows), now.date())
