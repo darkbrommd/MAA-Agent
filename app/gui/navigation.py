@@ -49,7 +49,16 @@ class NavigationRail(QFrame):
         product_row = QHBoxLayout()
         self.product = QLabel("MAA Agent")
         self.product.setObjectName("PageTitle")
-        product_row.addWidget(self.product, 1)
+        product_row.addWidget(self.product)
+        product_row.addStretch(1)
+        layout.addLayout(product_row)
+
+        subtitle_row = QHBoxLayout()
+        subtitle = QLabel("2.0 Preview")
+        subtitle.setObjectName("MutedLabel")
+        self._optional_labels.append(subtitle)
+        subtitle_row.addWidget(subtitle)
+        subtitle_row.addStretch(1)
         collapse = QPushButton("‹")
         collapse.setFixedWidth(34)
         collapse.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -59,12 +68,9 @@ class NavigationRail(QFrame):
         collapse.setToolTip("折叠 / 展开导航栏")
         collapse.clicked.connect(self._toggle_collapsed)
         self.collapse_button = collapse
-        product_row.addWidget(collapse)
-        layout.addLayout(product_row)
-        subtitle = QLabel("2.0 Preview")
-        subtitle.setObjectName("MutedLabel")
-        self._optional_labels.append(subtitle)
-        layout.addWidget(subtitle)
+        subtitle_row.addWidget(collapse)
+        self._subtitle_row = subtitle_row
+        layout.addLayout(subtitle_row)
         layout.addSpacing(18)
 
         group = QButtonGroup(self)
@@ -125,6 +131,11 @@ class NavigationRail(QFrame):
         self._expanded = not self._expanded
         self.setFixedWidth(192 if self._expanded else 68)
         self.product.setVisible(self._expanded)
+        self._subtitle_row.setStretch(1, 1 if self._expanded else 0)
+        self._subtitle_row.setAlignment(
+            self.collapse_button,
+            Qt.AlignmentFlag.AlignRight if self._expanded else Qt.AlignmentFlag.AlignHCenter,
+        )
         self.collapse_button.setIcon(QIcon(str(ICON_DIR / ("chevron-left.svg" if self._expanded else "chevron-right.svg"))))
         for label in self._optional_labels:
             label.setVisible(self._expanded)

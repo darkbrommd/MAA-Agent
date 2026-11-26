@@ -395,8 +395,9 @@ class GuiV2Tests(unittest.TestCase):
         inserts = []
         model.modelReset.connect(lambda: resets.append(True))
         model.rowsInserted.connect(lambda _parent, first, last: inserts.append((first, last)))
-        self.assertEqual(model.sync_rows((row(0), row(1), row(2))), "append")
-        self.assertEqual(model.sync_rows((row(-1), row(0), row(1), row(2))), "prepend")
+        self.assertEqual(model.append_rows((row(2),)), "append")
+        self.assertEqual(model.prepend_rows((row(-1),)), "prepend")
+        self.assertEqual(model.append_rows((row(2),)), "noop")
         self.assertEqual(resets, [])
         self.assertEqual(inserts, [(2, 2), (0, 0)])
         self.assertEqual(model.rowCount(), 4)
@@ -464,7 +465,7 @@ class GuiV2Tests(unittest.TestCase):
             self.assertEqual(page._override_pool.maxThreadCount(), 1)
             page.close()
 
-    def test_wheel_at_existing_bottom_starts_one_extension_and_reset_unlocks(self):
+    def test_wheel_at_existing_bottom_requests_only_one_new_day(self):
         with tempfile.TemporaryDirectory() as temporary:
             base_dir = Path(temporary)
             (base_dir / "config").mkdir(parents=True)
@@ -489,12 +490,17 @@ class GuiV2Tests(unittest.TestCase):
             )
             QApplication.sendEvent(page.list_view.viewport(), event)
             self.assertEqual(page.window_end, old_end + timedelta(days=1))
-            self.assertTrue(page._wheel_blocked)
+            self.assertTrue(page._edge_lock)
+            extension = page._request_contexts[page._active_request_id]
+            self.assertEqual(extension["mode"], "extend_down")
+            self.assertEqual(extension["request_start"], page.window_end)
+            self.assertEqual(extension["request_end"], page.window_end)
             selected = page.selected_day + timedelta(days=1)
             page.set_day(selected)
-            self.assertFalse(page._wheel_blocked)
             context = page._request_contexts[page._active_request_id]
             self.assertEqual(context["mode"], "reset")
+            self.assertEqual(context["request_start"], page.window_start)
+            self.assertEqual(context["request_end"], page.window_end)
             QThreadPool.globalInstance().waitForDone(3000)
             process_events(80)
             page.close()
@@ -539,7 +545,7 @@ class GuiV2Tests(unittest.TestCase):
             self.assertEqual(bar.value() - before, page._wheel_step_px)
             page.close()
 
-    def test_blocked_wheel_tail_is_consumed_instead_of_replayed(self):
+    def test_loading_keeps_existing_list_scrollable_without_replaying_wheel_tail(self):
         with tempfile.TemporaryDirectory() as temporary:
             base_dir = Path(temporary)
             (base_dir / "config").mkdir(parents=True)
@@ -550,11 +556,27 @@ class GuiV2Tests(unittest.TestCase):
             page = SchedulePage(base_dir, {})
             QThreadPool.globalInstance().waitForDone(3000)
             process_events(100)
+            base = datetime(2026, 11, 24)
+            rows = tuple({
+                "label": "MAA1",
+                "datetime": base + timedelta(hours=index),
+                "original_datetime": base + timedelta(hours=index),
+                "config": "任务",
+                "state": "future",
+                "status_title": "等待运行",
+                "status_detail": "到点后会提醒",
+                "skipped": False,
+                "override": None,
+            } for index in range(24))
+            page.model.set_rows(rows)
+            page.resize(900, 420)
+            page.show()
+            process_events(100)
+            bar = page.list_view.verticalScrollBar()
+            bar.setValue(bar.maximum())
             page._loading = False
-            page._edge_lock = False
-            page._wheel_blocked = True
-            page._extension_direction = 1
-            before = page.list_view.verticalScrollBar().value()
+            page._edge_lock = True
+            before = bar.value()
             for _ in range(3):
                 event = QWheelEvent(
                     QPointF(20, 20),
@@ -567,9 +589,19 @@ class GuiV2Tests(unittest.TestCase):
                     False,
                 )
                 QApplication.sendEvent(page.list_view.viewport(), event)
-            self.assertEqual(page.list_view.verticalScrollBar().value(), before)
-            self.assertTrue(page._wheel_blocked)
-            self.assertTrue(page._wheel_quiet_timer.isActive())
+            self.assertEqual(bar.value(), before)
+            reverse = QWheelEvent(
+                QPointF(20, 20), QPointF(20, 20), QPoint(), QPoint(0, 120),
+                Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                Qt.ScrollPhase.NoScrollPhase, False,
+            )
+            page._loading = True
+            QApplication.sendEvent(page.list_view.viewport(), reverse)
+            self.assertEqual(before - bar.value(), page._wheel_step_px)
+            after_reverse = bar.value()
+            page.model.append_rows(({**rows[-1], "datetime": base + timedelta(hours=24), "original_datetime": base + timedelta(hours=24)},))
+            process_events(80)
+            self.assertEqual(bar.value(), after_reverse)
             page.close()
 
     def test_schedule_card_toggle_worker_only_changes_supervision_override(self):
@@ -933,11 +965,19 @@ class GuiV2Tests(unittest.TestCase):
             window = MainWindow(base_dir)
             self.assertEqual(set(window._pages), {"schedule"})
             self.assertTrue(window.status_bar.isHidden())
+            schedule = window._pages["schedule"]
+            self.assertFalse(hasattr(schedule, "status"))
+            self.assertFalse(any(label.text().startswith(("正在读取", "已加载")) for label in schedule.findChildren(QLabel)))
+            window.show()
+            process_events(80)
+            self.assertGreater(
+                window.navigation.collapse_button.geometry().top(),
+                window.navigation.product.geometry().bottom(),
+            )
             window.navigation._toggle_collapsed()
             self.assertEqual(window.navigation.width(), 68)
             window.navigation._toggle_collapsed()
             self.assertEqual(window.navigation.width(), 192)
-            schedule = window._pages["schedule"]
             window.show_page("resources")
             resources = window._pages["resources"]
             self.assertEqual(schedule.list_view.horizontalScrollBarPolicy(), Qt.ScrollBarPolicy.ScrollBarAlwaysOff)

@@ -4,7 +4,7 @@ import json
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication, QEvent, QObject, QPoint, QRunnable, QThreadPool, QTimer, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, QRunnable, QThreadPool, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
@@ -88,8 +88,6 @@ class SchedulePage(QWidget):
         self._loading = False
         self._edge_lock = False
         self._scroll_intent = False
-        self._wheel_blocked = False
-        self._extension_direction = 0
         self._wheel_step_px = 48
         self._anchor_datetime: datetime | None = None
         self._preserve_key: tuple | None = None
@@ -102,10 +100,6 @@ class SchedulePage(QWidget):
         self._pending_toggle_items: dict[tuple, tuple[dict, bool]] = {}
         self._override_pool = QThreadPool(self)
         self._override_pool.setMaxThreadCount(1)
-        self._wheel_quiet_timer = QTimer(self)
-        self._wheel_quiet_timer.setSingleShot(True)
-        self._wheel_quiet_timer.setInterval(460)
-        self._wheel_quiet_timer.timeout.connect(self._release_wheel_block)
         self.service = ScheduleService(self.base_dir, parent=self)
         self.service.loaded.connect(self._on_loaded)
         self.service.failed.connect(self._on_failed)
@@ -152,9 +146,6 @@ class SchedulePage(QWidget):
         hint = QLabel("开关和日期修改只影响当次监测，不会影响 MAA 本身的计划执行。")
         hint.setObjectName("MutedLabel")
         root.addWidget(hint)
-        self.status = QLabel("正在读取日程…")
-        self.status.setObjectName("MutedLabel")
-        root.addWidget(self.status)
         self.list_view = QListView()
         self.list_view.setModel(self.model)
         self.list_view.setItemDelegate(self.delegate)
@@ -188,22 +179,32 @@ class SchedulePage(QWidget):
         self.window_start = selected - timedelta(days=3)
         self.window_end = selected + timedelta(days=3)
         self._anchor_datetime = datetime.combine(selected, datetime.min.time()).replace(hour=12)
-        self._cancel_wheel_block()
         self.refresh("reset", self._anchor_datetime)
 
-    def refresh(self, mode: str = "preserve", anchor_datetime: datetime | None = None) -> int:
-        if not mode.startswith("extend"):
-            self._cancel_wheel_block()
+    def refresh(
+        self,
+        mode: str = "preserve",
+        anchor_datetime: datetime | None = None,
+        previous_bounds: tuple[date, date] | None = None,
+    ) -> int:
         self._loading = True
-        self.status.setText(f"正在读取 {self.window_start:%m-%d} 至 {self.window_end:%m-%d}…")
-        start = datetime.combine(self.window_start, datetime.min.time())
-        end = datetime.combine(self.window_end + timedelta(days=1), datetime.min.time()) - timedelta(microseconds=1)
+        if mode == "extend_up":
+            request_start = request_end = self.window_start
+        elif mode == "extend_down":
+            request_start = request_end = self.window_end
+        else:
+            request_start, request_end = self.window_start, self.window_end
+        start = datetime.combine(request_start, datetime.min.time())
+        end = datetime.combine(request_end + timedelta(days=1), datetime.min.time()) - timedelta(microseconds=1)
         context = {
             "mode": mode,
             "anchor_datetime": anchor_datetime,
             "preserve_key": self._preserve_key,
             "preserve_y": self._preserve_y,
             "preserve_scroll_value": self._preserve_scroll_value,
+            "previous_bounds": previous_bounds,
+            "request_start": request_start,
+            "request_end": request_end,
         }
         request_id = self.service.request_window(start, end)
         self._request_contexts = {request_id: context}
@@ -219,10 +220,13 @@ class SchedulePage(QWidget):
         update_kind = "reset"
         if mode == "reset":
             self.model.set_rows(snapshot.rows)
+        elif mode == "extend_up":
+            update_kind = self.model.prepend_rows(snapshot.rows)
+        elif mode == "extend_down":
+            update_kind = self.model.append_rows(snapshot.rows)
         else:
             update_kind = self.model.sync_rows(snapshot.rows)
         self.delegate.sync_toggle_states(self.model.rows())
-        self.status.setText(f"已加载 {snapshot.start:%m-%d} 至 {snapshot.end:%m-%d} · {len(snapshot.rows)} 个计划")
         if mode == "reset":
             target = context.get("anchor_datetime") or datetime.now()
             self._anchor_datetime = None
@@ -243,21 +247,18 @@ class SchedulePage(QWidget):
             )
         self._loading = False
         self._edge_lock = False
-        if mode.startswith("extend"):
-            QCoreApplication.removePostedEvents(self.list_view.viewport(), QEvent.Type.Wheel)
-            self._wheel_quiet_timer.start()
-        else:
-            self._cancel_wheel_block()
 
     def _on_failed(self, request_id: int, message: str) -> None:
         if request_id != self._active_request_id:
             return
-        self._request_contexts.pop(request_id, None)
+        context = self._request_contexts.pop(request_id, {})
         self._active_request_id = 0
         self._loading = False
         self._edge_lock = False
-        self._cancel_wheel_block()
-        self.status.setText(f"日程读取失败：{message}")
+        previous_bounds = context.get("previous_bounds")
+        if previous_bounds:
+            self.window_start, self.window_end = previous_bounds
+        self._show_transient_message(f"日程读取失败：{message}")
 
     def _capture_view_anchor(self) -> None:
         index = self.list_view.indexAt(QPoint(12, 12))
@@ -294,8 +295,6 @@ class SchedulePage(QWidget):
         self.list_view.setCurrentIndex(index)
 
     def _on_scroll(self, value: int) -> None:
-        if self._loading:
-            return
         index = self.list_view.indexAt(QPoint(12, 12))
         if index.isValid():
             item = self.model.item(index.row())
@@ -303,45 +302,35 @@ class SchedulePage(QWidget):
             self.selected_day = visible_day
             self.page_state["selected_day"] = visible_day.isoformat()
             self.date_picker.set_date(visible_day, emit=False)
-        if self._edge_lock or self._wheel_blocked or not self._scroll_intent:
+        if self._edge_lock or not self._scroll_intent:
             return
         bar = self.list_view.verticalScrollBar()
         direction = -1 if value <= bar.minimum() + 2 else (1 if value >= bar.maximum() - 2 else 0)
         self._try_extend(direction)
 
     def _try_extend(self, direction: int) -> bool:
-        if not direction or self._edge_lock or self._wheel_blocked or self._loading:
+        if not direction or self._edge_lock or self._loading:
             return False
         loaded_days = (self.window_end - self.window_start).days + 1
         if loaded_days >= self._max_window_days:
             return False
         self._edge_lock = True
-        self._wheel_blocked = True
-        self._extension_direction = direction
-        self._wheel_quiet_timer.stop()
         self._scroll_intent = False
         self._capture_view_anchor()
+        previous_bounds = (self.window_start, self.window_end)
         if direction < 0:
             self.window_start -= timedelta(days=1)
             mode = "extend_up"
         else:
             self.window_end += timedelta(days=1)
             mode = "extend_down"
-        self.refresh(mode)
+        self.refresh(mode, previous_bounds=previous_bounds)
         return True
 
     def eventFilter(self, watched, event) -> bool:
         if watched is self.list_view.viewport() and event.type() == QEvent.Type.Wheel:
             delta = event.angleDelta().y()
             wheel_direction = -1 if delta > 0 else (1 if delta < 0 else 0)
-            if self._wheel_blocked or self._loading:
-                if self._wheel_blocked and not self._loading and wheel_direction == -self._extension_direction:
-                    self._cancel_wheel_block()
-                else:
-                    if self._wheel_blocked:
-                        self._wheel_quiet_timer.start()
-                    event.accept()
-                    return True
             bar = self.list_view.verticalScrollBar()
             at_edge = (wheel_direction < 0 and bar.value() <= bar.minimum() + 2) or (
                 wheel_direction > 0 and bar.value() >= bar.maximum() - 2
@@ -361,16 +350,11 @@ class SchedulePage(QWidget):
     def _clear_scroll_intent(self) -> None:
         self._scroll_intent = False
 
-    def _release_wheel_block(self) -> None:
-        if self._loading or self._edge_lock:
-            return
-        self._wheel_blocked = False
-        self._extension_direction = 0
-
-    def _cancel_wheel_block(self) -> None:
-        self._wheel_quiet_timer.stop()
-        self._wheel_blocked = False
-        self._extension_direction = 0
+    def _show_transient_message(self, message: str) -> None:
+        window = self.window()
+        status_bar = getattr(window, "statusBar", None)
+        if callable(status_bar):
+            status_bar().showMessage(message, 6000)
 
     def toggle_occurrence(self, item: dict, enabled: bool) -> None:
         action = "clear" if enabled else "skip"
@@ -398,7 +382,7 @@ class SchedulePage(QWidget):
     def _submit_override(self, item: dict, action: str, target: datetime | None) -> bool:
         key = schedule_row_key(item)
         if key in self._pending_override_keys:
-            self.status.setText("这条计划的调整正在保存，请稍候。")
+            self._show_transient_message("这条计划正在保存，请稍候。")
             return False
         worker = _OverrideWorker(self.base_dir, dict(item), action, target)
         self._override_workers.add(worker)
@@ -412,7 +396,7 @@ class SchedulePage(QWidget):
         self._override_workers.discard(worker)
         self._pending_override_keys.discard(key)
         self._pending_toggle_items.pop(key, None)
-        self.status.setText(message)
+        self._show_transient_message(message)
         active = self._request_contexts.get(self._active_request_id, {})
         if active.get("mode") == "reset":
             self.refresh("reset", active.get("anchor_datetime"))
@@ -428,5 +412,4 @@ class SchedulePage(QWidget):
             item, original_enabled = pending
             self.delegate.animate_toggle(item, original_enabled)
             QTimer.singleShot(180, lambda: self.delegate.sync_toggle_states(self.model.rows()))
-        self.status.setText(f"调整失败：{message}")
         QMessageBox.warning(self, "调整失败", message)

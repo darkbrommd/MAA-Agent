@@ -72,6 +72,29 @@ class ScheduleModel(QAbstractListModel):
         self.set_rows(incoming)
         return "reset"
 
+    def append_rows(self, rows) -> str:
+        """Append only rows that are not already visible."""
+        existing = {schedule_row_key(row) for row in self._rows}
+        incoming = tuple(dict(row) for row in rows if schedule_row_key(row) not in existing)
+        if not incoming:
+            return "noop"
+        first = len(self._rows)
+        self.beginInsertRows(QModelIndex(), first, first + len(incoming) - 1)
+        self._rows = self._rows + incoming
+        self.endInsertRows()
+        return "append"
+
+    def prepend_rows(self, rows) -> str:
+        """Prepend only rows that are not already visible."""
+        existing = {schedule_row_key(row) for row in self._rows}
+        incoming = tuple(dict(row) for row in rows if schedule_row_key(row) not in existing)
+        if not incoming:
+            return "noop"
+        self.beginInsertRows(QModelIndex(), 0, len(incoming) - 1)
+        self._rows = incoming + self._rows
+        self.endInsertRows()
+        return "prepend"
+
     def row_for_key(self, key: tuple | None) -> int:
         if key is None:
             return -1
