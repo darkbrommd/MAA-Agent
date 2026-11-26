@@ -79,13 +79,28 @@ def article_plain_text(cid: str, timeout: float = 15.0) -> str:
     text = html.unescape(html.unescape(text))
     text = re.sub(r"<script\b[^>]*>.*?</script>", " ", text, flags=re.I | re.S)
     text = re.sub(r"<style\b[^>]*>.*?</style>", " ", text, flags=re.I | re.S)
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.I)
+    text = re.sub(r"</(?:p|div|section|article|h[1-6]|li)\s*>", "\n", text, flags=re.I)
+    text = re.sub(r"<li\b[^>]*>", "\n◆", text, flags=re.I)
     text = re.sub(r"<[^>]+>", " ", text)
     return clean_article_text(text)
 
 
 def clean_article_text(text: str) -> str:
     """Remove the official site's page chrome while retaining article prose."""
-    value = re.sub(r"\s+", " ", str(text or "")).strip()
+    value = html.unescape(str(text or "")).replace("\u00a0", " ")
+    value = value.replace("\r\n", "\n").replace("\r", "\n")
+    # The generated page appends a stable navigation footer after the article.
+    # Cut only that tail; earlier implementations removed individual words and
+    # could leave the rest of the navigation mixed into the final paragraph.
+    value = re.sub(
+        r"\s*(?:\d{2}\s*//\s*\d{2}\s*/\s*\d{2}\s*)?"
+        r"(?:INDEX\s*)?首页\s+INFORMATION\s+情报\s+OPERATOR\s+干员\s+"
+        r"WORLD\s+设定\s+MEDIA\s+泰拉万象(?:\s+MORE\s+更多内容)?.*$",
+        "",
+        value,
+        flags=re.I | re.S,
+    )
     # Navigation fragments can appear before or after the article depending on
     # the site's generated page stream.  Removing the tokens is safer than
     # cutting at the first one, which used to discard valid body text.
@@ -97,7 +112,8 @@ def clean_article_text(text: str) -> str:
         value,
         flags=re.I,
     )
-    value = re.sub(r"\s+", " ", value).strip()
+    value = re.sub(r"[ \t\f\v]+", " ", value)
+    value = re.sub(r" *\n *", "\n", value)
     # The visible page repeats “title - 明日方舟 公告 title date” before the body.
     value = re.sub(
         r"^(?P<title>.+?)\s*-\s*明日方舟\s+公告\s+(?P=title)\s+"
@@ -106,7 +122,18 @@ def clean_article_text(text: str) -> str:
         value,
         count=1,
     )
-    return value.strip()
+    # Cached pages from older versions are already flattened.  Restore the
+    # article's most useful visual structure without guessing at every sentence.
+    value = re.sub(r"\s*([◆●▪•※])\s*", r"\n\1 ", value)
+    section_names = (
+        "维护时间", "闪断更新时间", "更新内容", "维护内容", "补偿内容", "闪断补偿",
+        "维护补偿", "强制更新补偿", "补偿范围", "领取时间", "活动时间", "开放时间",
+    )
+    section_pattern = "|".join(re.escape(name) for name in section_names)
+    value = re.sub(rf"(?<!^)\s*(?=({section_pattern})\s*[：:])", "\n", value)
+    value = re.sub(r"\s*(?=【明日方舟】运营组)", "\n", value)
+    lines = [re.sub(r"\s+", " ", line).strip() for line in value.split("\n")]
+    return "\n".join(line for line in lines if line).strip()
 
 
 def article_summary(content: str, fallback: str = "", minimum: int = 80, limit: int = 320) -> str:

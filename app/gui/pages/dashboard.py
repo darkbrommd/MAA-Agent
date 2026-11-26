@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from gui.components.metric_card import MetricCard
 from gui.components.resource_chart import ResourceChart
+from gui.components.toggle_switch import ToggleSwitch
 from gui.services.dashboard_service import DashboardService, DashboardSnapshot
 from gui.services.log_service import LogChunk, LogService, line_matches
 from gui.services.process_service import ProcessSnapshot
@@ -115,7 +116,7 @@ class DashboardPage(QWidget):
         self._last_static_refresh = 0.0
         self._log_lines: list[str] = []
         self._schedule_rows: tuple[dict, ...] = ()
-        self._override_workers: set[_DashboardOverrideWorker] = set()
+        self._override_workers: dict[_DashboardOverrideWorker, tuple[ToggleSwitch, bool]] = {}
         self._build_ui()
         self.dashboard_service = DashboardService(self.base_dir, parent=self)
         self.dashboard_service.loaded.connect(self._apply_dashboard)
@@ -201,7 +202,7 @@ class DashboardPage(QWidget):
         self.log_view.setReadOnly(True)
         self.log_view.setMaximumBlockCount(1200)
         self.log_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self.log_view.setPlaceholderText("暂时没有事故或恢复事件；Agent 的正常运行不会在这里刷屏。")
+        self.log_view.setPlaceholderText("（最近没有事故、异常或恢复记录）")
         self.activity_splitter.addWidget(self.chart)
         self.activity_splitter.addWidget(self.log_view)
         activity_layout.addWidget(self.activity_splitter, 1)
@@ -292,12 +293,15 @@ class DashboardPage(QWidget):
             background, accent = tokens.running_card, tokens.warning
         elif state == "next":
             background, accent = tokens.next_card, tokens.success
-        elif state in {"done", "off"}:
+        elif state == "done":
             background, accent = tokens.ended_card, tokens.ended
+        elif state == "off":
+            background, accent = tokens.off_card, tokens.off
         else:
-            background, accent = tokens.card, tokens.muted
+            background, accent = tokens.future_card, tokens.muted
+        border = accent if state in {"failed", "running", "next"} else tokens.border
         widget.setStyleSheet(
-            f"QFrame#DashboardPlanCard {{ background: {background}; border: 1px solid {tokens.border}; border-radius: 9px; }}"
+            f"QFrame#DashboardPlanCard {{ background: {background}; border: 1px solid {border}; border-radius: 9px; }}"
         )
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(0, 7, 9, 7)
@@ -326,31 +330,36 @@ class DashboardPage(QWidget):
         content_layout.addWidget(title)
         content_layout.addWidget(status)
         layout.addWidget(content, 1)
-        toggle = QPushButton("恢复监测" if row.get("skipped") else "关闭本次")
-        toggle.setFixedWidth(82)
-        toggle.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        toggle = ToggleSwitch(not bool(row.get("skipped")), self._theme)
+        toggle.setFixedSize(46, 26)
         toggle.setToolTip("只调整 Agent 对这一次计划的监督预期，不修改 MAA 定时器。")
-        toggle.clicked.connect(lambda _checked=False, value=dict(row), button=toggle: self._toggle_plan(value, button))
+        toggle.toggled.connect(lambda enabled, value=dict(row), switch=toggle: self._toggle_plan(value, switch, enabled))
         layout.addWidget(toggle)
         self.schedule_list.setItemWidget(item, widget)
 
-    def _toggle_plan(self, item: dict, button: QPushButton) -> None:
-        button.setEnabled(False)
-        button.setText("正在保存…")
+    def _toggle_plan(self, item: dict, toggle: ToggleSwitch, enabled: bool) -> None:
+        original = not bool(item.get("skipped"))
+        if enabled == original:
+            return
+        toggle.setEnabled(False)
         worker = _DashboardOverrideWorker(self.base_dir, item)
-        self._override_workers.add(worker)
+        self._override_workers[worker] = (toggle, original)
         worker.signals.done.connect(lambda message, task=worker: self._override_finished(task, message))
         worker.signals.failed.connect(lambda message, task=worker: self._override_failed(task, message))
         QThreadPool.globalInstance().start(worker)
 
     def _override_finished(self, worker: _DashboardOverrideWorker, message: str) -> None:
-        self._override_workers.discard(worker)
+        self._override_workers.pop(worker, None)
         self.status_label.setText(message)
         self._last_static_refresh = 0.0
         self.refresh_tick(force=True)
 
     def _override_failed(self, worker: _DashboardOverrideWorker, message: str) -> None:
-        self._override_workers.discard(worker)
+        pending = self._override_workers.pop(worker, None)
+        if pending is not None:
+            toggle, original = pending
+            toggle.setEnabled(True)
+            toggle.setChecked(original)
         self.status_label.setText(f"监督设置保存失败：{message}")
         self._last_static_refresh = 0.0
         self.refresh_tick(force=True)
@@ -388,7 +397,7 @@ class DashboardPage(QWidget):
         elif self.page_state.get("log_cutoff"):
             self.log_view.setPlaceholderText("主页此前事件已隐藏；源日志仍完整保留。")
         else:
-            self.log_view.setPlaceholderText("暂时没有事故或恢复事件；Agent 的正常运行不会在这里刷屏。")
+            self.log_view.setPlaceholderText("（最近没有事故、异常或恢复记录）")
         self.log_view.verticalScrollBar().setValue(self.log_view.verticalScrollBar().maximum())
 
     def _change_log_mode(self, mode: str) -> None:

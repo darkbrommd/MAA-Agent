@@ -20,8 +20,11 @@ class ThemeTokens:
     failure_card: str
     running_card: str
     next_card: str
+    future_card: str
     ended_card: str
     ended: str
+    off_card: str
+    off: str
     disabled_text: str
     disabled_background: str
 
@@ -44,8 +47,11 @@ DARK = ThemeTokens(
     failure_card="#3A1E22",
     running_card="#3B3420",
     next_card="#203A2A",
-    ended_card="#252D36",
-    ended="#6E7681",
+    future_card="#202735",
+    ended_card="#2B3542",
+    ended="#8290A3",
+    off_card="#171B22",
+    off="#596474",
     disabled_text="#5C6573",
     disabled_background="#161B22",
 )
@@ -65,8 +71,11 @@ LIGHT = ThemeTokens(
     failure_card="#FCEBEB",
     running_card="#FFF1C2",
     next_card="#DFF3E5",
+    future_card="#FFFFFF",
     ended_card="#E3E8ED",
     ended="#8C96A5",
+    off_card="#EEF1F5",
+    off="#9AA4B2",
     disabled_text="#9AA4B2",
     disabled_background="#EEF1F5",
 )

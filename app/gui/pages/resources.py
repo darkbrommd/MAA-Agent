@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from gui.components.resource_chart import ResourceChart
 from gui.components.responsive_layout import responsive_card_rect
+from gui.components.dialogs import show_resource_detail
 from gui.models.resource_model import ResourceModel
 from gui.services.resource_service import ResourceService, ResourceSnapshot
 from gui.themes.tokens import DARK, LIGHT
@@ -311,10 +312,7 @@ class ResourcesPage(QWidget):
     def _show_detail(self, row: dict) -> None:
         if not row:
             return
-        when = datetime.fromtimestamp(float(row.get("epoch", 0)))
-        apps = row.get("top_apps") or row.get("top_processes") or ()
-        lines = [f"{item.get('name', '进程')}  {float(item.get('mb', 0))/1024:.2f} GB" for item in apps]
-        QMessageBox.information(self, f"{when:%Y-%m-%d %H:%M} 资源详情", "\n".join(lines) or "没有进程明细。")
+        show_resource_detail(self, row, self.theme)
 
     def _load_whitelist(self) -> None:
         worker = _WhitelistWorker(self.base_dir)

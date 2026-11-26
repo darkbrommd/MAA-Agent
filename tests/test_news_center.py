@@ -65,6 +65,20 @@ class NewsCacheRefreshTests(unittest.TestCase):
         self.assertEqual(news_monitor.DEFAULT_NEWS_INITIAL_FETCH_COUNT, 20)
         self.assertEqual(news_monitor._cache_limits({}), (50, 20))
 
+    def test_article_cleaner_removes_site_footer_and_restores_list_structure(self):
+        raw = (
+            "感谢支持。 更新内容： ◆第一项 ◆第二项 补偿范围： 全体玩家 "
+            "【明日方舟】运营组 2026年11月26日 02 // 01 / 05 INDEX 首页 "
+            "INFORMATION 情报 OPERATOR 干员 WORLD 设定 MEDIA 泰拉万象 MORE 更多内容"
+        )
+        cleaned = news_monitor.clean_article_text(raw)
+        self.assertNotIn("INFORMATION", cleaned)
+        self.assertNotIn("泰拉万象", cleaned)
+        self.assertIn("\n更新内容：", cleaned)
+        self.assertIn("\n◆ 第一项", cleaned)
+        self.assertIn("\n◆ 第二项", cleaned)
+        self.assertIn("\n补偿范围：", cleaned)
+
     def test_first_refresh_keeps_latest_twenty_announcements(self):
         rows = [make_row(n) for n in range(1, 31)]
         recorder = ProgressRecorder()

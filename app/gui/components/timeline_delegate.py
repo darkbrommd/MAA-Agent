@@ -163,9 +163,11 @@ class TimelineDelegate(QStyledItemDelegate):
             return tokens.running_card, tokens.warning
         if state == "next":
             return tokens.next_card, tokens.success
-        if state in {"done", "off"}:
+        if state == "done":
             return tokens.ended_card, tokens.ended
-        return tokens.card, tokens.muted
+        if state == "off":
+            return tokens.off_card, tokens.off
+        return tokens.future_card, tokens.muted
 
     def _draw_button(self, painter: QPainter, rect: QRectF, text: str, color: str, background: str) -> None:
         if rect.isEmpty():
@@ -187,7 +189,7 @@ class TimelineDelegate(QStyledItemDelegate):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         if item.get("show_date_header"):
             when = item.get("datetime")
-            day_text = when.strftime("%Y年%m月%d日") if when else "日期"
+            day_text = f"{when.year:04d}年{when.month:02d}月{when.day:02d}日" if when else "日期"
             weekday = "一二三四五六日"[when.weekday()] if when else ""
             header = QRectF(option.rect).adjusted(12, 1, -12, -option.rect.height() + 29)
             painter.setPen(QColor(tokens.text))
@@ -199,7 +201,9 @@ class TimelineDelegate(QStyledItemDelegate):
             painter.setPen(QPen(QColor(tokens.border), 1))
             line = QRectF(line_left, header.center().y(), max(0, header.right() - line_left), 1)
             painter.drawLine(line.topLeft(), line.topRight())
-        painter.setPen(QPen(QColor(tokens.border), 1))
+        border = QColor(accent if state in {"failed", "running", "next"} else tokens.border)
+        border.setAlpha(190 if state in {"failed", "running", "next"} else 255)
+        painter.setPen(QPen(border, 1))
         painter.setBrush(QColor(background))
         painter.drawRoundedRect(layout.card, 10, 10)
         painter.setPen(Qt.PenStyle.NoPen)

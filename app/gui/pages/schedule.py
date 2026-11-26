@@ -76,6 +76,7 @@ class SchedulePage(QWidget):
         super().__init__(parent)
         self.base_dir = Path(base_dir)
         self.page_state = page_state
+        self.theme = theme
         stored = page_state.get("selected_day")
         try:
             self.selected_day = date.fromisoformat(stored) if stored else date.today()
@@ -109,7 +110,7 @@ class SchedulePage(QWidget):
         self.service.failed.connect(self._on_failed)
         self.model = ScheduleModel(self)
         self.delegate = TimelineDelegate(theme, self)
-        self.delegate.error_requested.connect(lambda item: show_schedule_error(self, item))
+        self.delegate.error_requested.connect(lambda item: show_schedule_error(self, item, self.theme))
         self.delegate.monitor_toggled.connect(self.toggle_occurrence)
         self.delegate.move_requested.connect(self.move_occurrence)
         self.delegate.clear_requested.connect(self.clear_occurrence)
@@ -167,6 +168,7 @@ class SchedulePage(QWidget):
         root.addWidget(self.list_view, 1)
 
     def set_theme(self, theme: str) -> None:
+        self.theme = theme
         self.delegate.set_theme(theme)
         self.list_view.viewport().update()
 

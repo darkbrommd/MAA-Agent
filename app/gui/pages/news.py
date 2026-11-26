@@ -22,6 +22,41 @@ from gui.models.news_model import NewsModel
 from gui.services.news_service import NewsService, NewsSnapshot
 
 
+_SECTION_LABELS = (
+    "维护时间", "闪断更新时间", "更新内容", "维护内容", "补偿内容", "闪断补偿",
+    "维护补偿", "强制更新补偿", "补偿范围", "领取时间", "活动时间", "开放时间",
+)
+
+
+def format_news_body_html(text: str) -> str:
+    """Render cleaned plain text as readable paragraphs and bullet lists."""
+    lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
+    if not lines:
+        return ""
+    parts: list[str] = []
+    bullets: list[str] = []
+
+    def flush_bullets() -> None:
+        if bullets:
+            parts.append("<ul>" + "".join(f"<li>{escape(value)}</li>" for value in bullets) + "</ul>")
+            bullets.clear()
+
+    for line in lines:
+        if line[0] in "◆●▪•※":
+            bullets.append(line[1:].strip())
+            continue
+        flush_bullets()
+        if any(line.startswith(label + marker) for label in _SECTION_LABELS for marker in ("：", ":")):
+            heading, value = line.replace(":", "：", 1).split("：", 1)
+            parts.append(f"<h3>{escape(heading)}</h3>")
+            if value.strip():
+                parts.append(f"<p>{escape(value.strip())}</p>")
+        else:
+            parts.append(f"<p>{escape(line)}</p>")
+    flush_bullets()
+    return "".join(parts)
+
+
 class NewsPage(QWidget):
     def __init__(self, base_dir: Path, page_state: dict, theme: str = "dark", parent=None):
         super().__init__(parent)
@@ -137,6 +172,8 @@ class NewsPage(QWidget):
             self.status.setText(f"{verb}完成 · 新增 {snapshot.new_count} 条 · 共 {snapshot.total} 条")
         if snapshot.errors:
             self.status.setText(self.status.text() + f" · {len(snapshot.errors)} 个页面失败")
+        if snapshot.missing_content:
+            self.status.setText(self.status.text() + f" · 还有 {snapshot.missing_content} 条正文待补，可再次增量更新")
         self._requested_mode = "local"
 
     def _show_current(self, index, _previous=None) -> None:
@@ -147,11 +184,15 @@ class NewsPage(QWidget):
         title = escape(str(item.get("title") or "官网公告"))
         when = escape(str(item.get("display_time") or item.get("published_at") or "时间未知"))
         brief = escape(str(item.get("brief") or "暂无摘要")).replace("\n", "<br>")
-        body = escape(str(item.get("body") or item.get("content") or "")).replace("\n", "<br>")
+        body = str(item.get("body") or item.get("content") or "")
         url = escape(str(item.get("url") or ""), quote=True)
         link = f'<p><a href="{url}">在浏览器打开原文</a></p>' if url else ""
-        content = f"<p>{body}</p>" if body else f'<p>{brief}</p><p><i>本地还没有完整正文，可点击“增量更新”补齐。</i></p>'
-        self.detail.setHtml(f"<h2>{title}</h2><p>{when}</p>{content}{link}")
+        content = format_news_body_html(body) if body else f'<p>{brief}</p><p><i>本地还没有完整正文，可点击“增量更新”补齐。</i></p>'
+        self.detail.setHtml(
+            "<style>p{line-height:1.55;margin:8px 0;} h2{margin-bottom:4px;} "
+            "h3{margin:16px 0 4px;} li{margin:5px 0;}</style>"
+            f"<h2>{title}</h2><p>{when}</p>{content}{link}"
+        )
 
     def _progress(self, current: int, total: int, message: str) -> None:
         prefix = f"{current}/{total} · " if total else ""

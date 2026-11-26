@@ -86,6 +86,18 @@ def _path_is_below(executable: str, directory: str) -> bool:
         return False
 
 
+def _service_host_name(cmdline: tuple[str, ...]) -> str:
+    """Return the concrete Windows service hosted by one svchost process."""
+    values = [str(value).strip() for value in cmdline]
+    for index, value in enumerate(values):
+        lowered = value.casefold()
+        if lowered == "-s" and index + 1 < len(values):
+            return values[index + 1].strip('"')
+        if lowered.startswith("-s="):
+            return value[3:].strip('"')
+    return ""
+
+
 def _build_snapshot(cfg: dict, rows: list[dict], disk_path: Path | None = None) -> ProcessSnapshot:
     instance_dirs = {str(key): str(value) for key, value in (cfg.get("maa_instance_dirs") or {}).items()}
     aliases = {str(key): str(value).strip() for key, value in (cfg.get("maa_instance_aliases") or {}).items()}
@@ -121,9 +133,18 @@ def _build_snapshot(cfg: dict, rows: list[dict], disk_path: Path | None = None) 
             group_key, group_name = "mumu", "MuMu"
         elif is_agent:
             group_key, group_name = "maa-agent", "MAA Agent"
-        group = memory_groups.setdefault(group_key, {"name": group_name, "memory": 0, "count": 0, "pid": row["pid"]})
-        group["memory"] += int(row.get("memory") or 0)
-        group["count"] += 1
+        elif name in {"svchost", "svchost.exe"}:
+            service_name = _service_host_name(tuple(row.get("cmdline") or ()))
+            if service_name:
+                group_key, group_name = f"service:{service_name.casefold()}", f"服务主机：{service_name}"
+            else:
+                # An unidentified service host is not one 84-process app.  It
+                # remains part of total system memory but does not enter Top 3.
+                group_key = ""
+        if group_key:
+            group = memory_groups.setdefault(group_key, {"name": group_name, "memory": 0, "count": 0, "pid": row["pid"]})
+            group["memory"] += int(row.get("memory") or 0)
+            group["count"] += 1
     vm = psutil.virtual_memory()
     try:
         disk = psutil.disk_usage(str(disk_path or Path.cwd()))

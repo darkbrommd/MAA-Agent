@@ -44,7 +44,7 @@ class NavigationRail(QFrame):
         self._optional_labels: list[QLabel] = []
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 16, 12, 12)
-        layout.setSpacing(5)
+        layout.setSpacing(7)
 
         product_row = QHBoxLayout()
         self.product = QLabel("MAA Agent")
@@ -73,11 +73,12 @@ class NavigationRail(QFrame):
         for item in ITEMS:
             if item.group != current_group:
                 if current_group is not None:
-                    layout.addSpacing(10)
+                    layout.addSpacing(18)
                 heading = QLabel(item.group)
                 heading.setObjectName("SectionLabel")
                 self._optional_labels.append(heading)
                 layout.addWidget(heading)
+                layout.addSpacing(3)
                 current_group = item.group
             button = QPushButton(item.label)
             button.setObjectName("NavButton")

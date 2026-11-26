@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QUrl, Qt
+from PySide6.QtCore import QUrl, Qt, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
@@ -23,6 +23,58 @@ LOG_LABELS = {
     "agent.log": "运行日志（agent.log）",
     "decision.log": "决策日志（decision.log）",
 }
+
+
+class _ZoomableLogView(QPlainTextEdit):
+    size_changed = Signal(int)
+
+    def __init__(self, font_size: int = 13, parent=None):
+        super().__init__(parent)
+        self._font_size = max(9, min(24, int(font_size)))
+        self._apply_font_size()
+
+    @property
+    def font_size(self) -> int:
+        return self._font_size
+
+    def set_font_size(self, value: int) -> None:
+        value = max(9, min(24, int(value)))
+        if value == self._font_size:
+            return
+        self._font_size = value
+        self._apply_font_size()
+        self.size_changed.emit(value)
+
+    def _apply_font_size(self) -> None:
+        self.setStyleSheet(
+            f'font-family: "Cascadia Mono", "Consolas"; font-size: {self._font_size}px;'
+        )
+
+    def wheelEvent(self, event) -> None:
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            delta = event.angleDelta().y()
+            if delta:
+                self.set_font_size(self._font_size + (1 if delta > 0 else -1))
+            event.accept()
+            return
+        super().wheelEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            key = event.key()
+            if key in {Qt.Key.Key_Plus, Qt.Key.Key_Equal}:
+                self.set_font_size(self._font_size + 1)
+                event.accept()
+                return
+            if key in {Qt.Key.Key_Minus, Qt.Key.Key_Underscore}:
+                self.set_font_size(self._font_size - 1)
+                event.accept()
+                return
+            if key == Qt.Key.Key_0:
+                self.set_font_size(13)
+                event.accept()
+                return
+        super().keyPressEvent(event)
 
 
 class LogsPage(QWidget):
@@ -78,10 +130,12 @@ class LogsPage(QWidget):
         tools.addWidget(open_file)
         tools.addWidget(refresh)
         root.addLayout(tools)
-        self.view = QPlainTextEdit()
+        self.view = _ZoomableLogView(int(self.page_state.get("font_size") or 13))
+        self.view.size_changed.connect(lambda value: self.page_state.__setitem__("font_size", value))
         self.view.setReadOnly(True)
         self.view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.view.setMaximumBlockCount(5000)
+        self.view.setToolTip("Ctrl + 加号/减号或 Ctrl + 鼠标滚轮调节字号；Ctrl + 0 恢复默认。")
         root.addWidget(self.view, 1)
         self.status = QLabel("增量读取；不会清空重插已有内容。")
         self.status.setObjectName("MutedLabel")

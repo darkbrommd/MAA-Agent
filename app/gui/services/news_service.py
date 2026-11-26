@@ -18,6 +18,7 @@ class NewsSnapshot:
     new_count: int = 0
     total: int = 0
     errors: tuple[str, ...] = ()
+    missing_content: int = 0
 
 
 def _snapshot(payload: dict) -> NewsSnapshot:
@@ -29,6 +30,7 @@ def _snapshot(payload: dict) -> NewsSnapshot:
         new_count=int(payload.get("new_count") or 0),
         total=int(payload.get("total") or len(items)),
         errors=tuple(str(value) for value in (payload.get("errors") or ())),
+        missing_content=sum(not str(item.get("content") or "").strip() for item in items),
     )
 
 

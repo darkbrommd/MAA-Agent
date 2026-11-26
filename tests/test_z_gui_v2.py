@@ -23,15 +23,17 @@ if str(APP_DIR) not in sys.path:
 
 from PySide6.QtCore import QCoreApplication, QEventLoop, QPoint, QPointF, QRect, QThreadPool, Qt
 from PySide6.QtGui import QImage, QPainter, QWheelEvent
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel
 
 from gui.components.resource_chart import ResourceChart
+from gui.components.dialogs import ResourceDetailDialog, ScheduleErrorDialog
 from gui.components.responsive_layout import responsive_card_rect
 from gui.components.timeline_delegate import TimelineDelegate, compute_card_layout
+from gui.components.toggle_switch import ToggleSwitch
 from gui.main_window import MainWindow
 from gui.models.news_model import NewsModel
 from gui.pages.dashboard import DashboardPage
-from gui.pages.news import NewsPage
+from gui.pages.news import NewsPage, format_news_body_html
 from gui.pages.logs import LogsPage
 from gui.models.schedule_model import ScheduleModel, schedule_row_key
 from gui.pages.resources import _WhitelistSaveWorker
@@ -75,7 +77,11 @@ class GuiV2Tests(unittest.TestCase):
             self.assertTrue(theme.disabled_background.startswith("#"))
             self.assertTrue(theme.running_card.startswith("#"))
             self.assertTrue(theme.next_card.startswith("#"))
+            self.assertTrue(theme.future_card.startswith("#"))
             self.assertTrue(theme.ended_card.startswith("#"))
+            self.assertTrue(theme.off_card.startswith("#"))
+            self.assertNotEqual(theme.future_card, theme.ended_card)
+            self.assertNotEqual(theme.ended_card, theme.off_card)
             stylesheet = load_stylesheet(theme.name)
             self.assertIn("QFrame#NavigationRail", stylesheet)
             self.assertIn('QLabel#StatusPill[status="running"]', stylesheet)
@@ -436,6 +442,19 @@ class GuiV2Tests(unittest.TestCase):
         self.assertEqual(snapshot.top_processes[0].memory_mb, 1500)
         self.assertEqual({item.name for item in snapshot.top_processes[1:]}, {"主号（MAA1）", "副号（MAA2）"})
 
+    def test_process_snapshot_splits_svchost_by_service_instead_of_one_app(self):
+        rows = [
+            {"pid": 1, "name": "svchost.exe", "exe": "C:/Windows/System32/svchost.exe", "memory": 900 * 1048576, "cmdline": ("svchost.exe", "-k", "LocalService", "-s", "WpnUserService_123")},
+            {"pid": 2, "name": "svchost.exe", "exe": "C:/Windows/System32/svchost.exe", "memory": 800 * 1048576, "cmdline": ("svchost.exe", "-k", "netsvcs", "-s", "BITS")},
+            {"pid": 3, "name": "svchost.exe", "exe": "C:/Windows/System32/svchost.exe", "memory": 700 * 1048576, "cmdline": ("svchost.exe", "-k", "unknown")},
+            {"pid": 4, "name": "ChatGPT.exe", "exe": "C:/ChatGPT/ChatGPT.exe", "memory": 750 * 1048576, "cmdline": ()},
+        ]
+        snapshot = _build_snapshot({}, rows)
+        names = [item.name for item in snapshot.top_processes]
+        self.assertEqual(names, ["服务主机：WpnUserService_123", "服务主机：BITS", "ChatGPT.exe"])
+        self.assertNotIn("svchost.exe", names)
+        self.assertTrue(all(item.process_count == 1 for item in snapshot.top_processes))
+
     def test_agent_control_refuses_duplicate_for_same_installation(self):
         with tempfile.TemporaryDirectory() as temporary, \
                 patch.object(agent_control_service, "validated_agent_for_dir", return_value={"pid": 321}), \
@@ -556,6 +575,17 @@ class GuiV2Tests(unittest.TestCase):
             self.assertEqual(page.log_view.toPlainText(), "")
             page.close()
 
+    def test_dashboard_empty_event_message_distinguishes_natural_empty_from_cutoff(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            state = {}
+            page = DashboardPage(Path(temporary), state)
+            page._log_lines = []
+            page._render_logs()
+            self.assertEqual(page.log_view.placeholderText(), "（最近没有事故、异常或恢复记录）")
+            page._clear_home_log()
+            self.assertIn("此前事件已隐藏", page.log_view.placeholderText())
+            page.close()
+
     def test_dashboard_schedule_uses_day_header_and_fixed_height_cards(self):
         with tempfile.TemporaryDirectory() as temporary:
             page = DashboardPage(Path(temporary), {})
@@ -593,6 +623,45 @@ class GuiV2Tests(unittest.TestCase):
             self.assertEqual(page.page_state["file"], "agent.log")
             QThreadPool.globalInstance().waitForDone(3000)
             page.close()
+
+    def test_log_font_size_is_bounded_and_persisted_without_toolbar_button(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            state = {"font_size": 15}
+            page = LogsPage(Path(temporary), state)
+            self.assertEqual(page.view.font_size, 15)
+            page.view.set_font_size(40)
+            self.assertEqual(page.view.font_size, 24)
+            self.assertEqual(state["font_size"], 24)
+            page.view.set_font_size(1)
+            self.assertEqual(page.view.font_size, 9)
+            page.close()
+
+    def test_shared_toggle_and_structured_detail_dialogs_render_offscreen(self):
+        toggle = ToggleSwitch(False)
+        toggle.setChecked(True, animate=False)
+        self.assertTrue(toggle.isChecked())
+        when = datetime(2026, 11, 26, 4, 0)
+        schedule = ScheduleErrorDialog({
+            "label": "MAA1", "display_label": "主号（MAA1）", "datetime": when,
+            "error": {"title": "任务执行失败", "summary": "连接超时", "task": "StartUp"},
+        })
+        self.assertEqual(schedule.windowTitle(), "任务执行失败")
+        resource = ResourceDetailDialog({
+            "epoch": when.timestamp(), "ram": 92, "memory_used_mb": 30000,
+            "memory_available_mb": 2000, "memory_total_mb": 32000, "abnormal": True,
+            "abnormal_reasons": ["内存达到阈值"], "top_apps": [{"name": "Game.exe", "mb": 4096, "count": 1}],
+        })
+        self.assertEqual(resource.windowTitle(), "资源采样详细分析")
+        self.assertTrue(any(label.text() == "按应用归并的内存大户" for label in resource.findChildren(QLabel)))
+        schedule.close()
+        resource.close()
+
+    def test_news_body_html_preserves_sections_and_bullets(self):
+        rendered = format_news_body_html("更新内容：\n◆ 第一项\n◆ 第二项\n补偿范围：所有玩家")
+        self.assertIn("<h3>更新内容</h3>", rendered)
+        self.assertIn("<ul>", rendered)
+        self.assertIn("<li>第一项</li>", rendered)
+        self.assertIn("<h3>补偿范围</h3>", rendered)
 
     def test_dashboard_signature_changes_only_when_sources_change(self):
         with tempfile.TemporaryDirectory() as temporary:
