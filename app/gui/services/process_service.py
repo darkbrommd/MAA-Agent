@@ -72,9 +72,18 @@ class _ProcessWorker(QRunnable):
                 except (psutil.Error, OSError, TypeError, ValueError):
                     continue
             snapshot = _build_snapshot(cfg, rows, self.base_dir)
-            self.signals.done.emit(snapshot)
         except Exception as exc:
-            self.signals.failed.emit(str(exc))
+            try:
+                self.signals.failed.emit(str(exc))
+            except RuntimeError:
+                # The manager may already be gone while a final scan finishes.
+                pass
+            return
+        try:
+            self.signals.done.emit(snapshot)
+        except RuntimeError:
+            # Closing a hidden/test window can remove the receiver first.
+            pass
 
 
 def _path_is_below(executable: str, directory: str) -> bool:
@@ -114,7 +123,7 @@ def _build_snapshot(cfg: dict, rows: list[dict], disk_path: Path | None = None) 
         if agent_pid is None and is_agent:
             agent_pid = row["pid"]
         group_key = f"app:{name}"
-        group_name = str(row.get("name") or f"PID {row.get('pid', '?')}")
+        group_name = str(row.get("name") or "未知程序")
         matched_instance = ""
         if name == "maa.exe":
             for label, directory in instance_dirs.items():
@@ -136,7 +145,7 @@ def _build_snapshot(cfg: dict, rows: list[dict], disk_path: Path | None = None) 
         elif name in {"svchost", "svchost.exe"}:
             service_name = _service_host_name(tuple(row.get("cmdline") or ()))
             if service_name:
-                group_key, group_name = f"service:{service_name.casefold()}", f"服务主机：{service_name}"
+                group_key, group_name = f"service:{service_name.casefold()}", f"Windows 服务：{service_name}"
             else:
                 # An unidentified service host is not one 84-process app.  It
                 # remains part of total system memory but does not enter Top 3.

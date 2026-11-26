@@ -82,7 +82,7 @@ class _WhitelistSaveWorker(QRunnable):
             temporary = path.with_suffix(path.suffix + ".tmp")
             temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
             os.replace(temporary, path)
-            self.signals.done.emit(True, "资源白名单已保存；Agent 下一轮会自动读取。")
+            self.signals.done.emit(True, "名单已保存，之后会按新名单检查。")
         except Exception as exc:
             self.signals.done.emit(False, str(exc))
 
@@ -161,7 +161,7 @@ class ResourcesPage(QWidget):
         segments = QButtonGroup(self)
         segments.setExclusive(True)
         history_button = QPushButton("历史趋势")
-        whitelist_button = QPushButton("资源白名单")
+        whitelist_button = QPushButton("高占用程序")
         for index, button in enumerate((history_button, whitelist_button)):
             button.setCheckable(True)
             button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -191,7 +191,7 @@ class ResourcesPage(QWidget):
         self.day_label = QLabel()
         navigation.addWidget(self.day_label)
         history_layout.addLayout(navigation)
-        self.summary = QLabel("正在读取资源历史…")
+        self.summary = QLabel("正在载入记录…")
         self.summary.setObjectName("MutedLabel")
         history_layout.addWidget(self.summary)
         self.chart = ResourceChart(self.theme)
@@ -205,7 +205,7 @@ class ResourcesPage(QWidget):
         anomaly_layout = QVBoxLayout(anomaly_panel)
         anomaly_layout.setContentsMargins(0, 0, 0, 0)
         anomaly_layout.setSpacing(6)
-        anomaly_title = QLabel("异常采样")
+        anomaly_title = QLabel("内存过高记录")
         anomaly_title.setStyleSheet("font-weight: 600;")
         anomaly_layout.addWidget(anomaly_title)
         self.anomalies = QListView()
@@ -232,12 +232,12 @@ class ResourcesPage(QWidget):
         whitelist = QWidget()
         whitelist_layout = QVBoxLayout(whitelist)
         whitelist_layout.setContentsMargins(0, 0, 0, 0)
-        note = QLabel("白名单程序的高占用视为预期负载；严重低内存仍会报警。")
+        note = QLabel("把游戏等常用高占用程序加入这里，运行时可减少不必要的提醒。内存快用完时仍会提醒。")
         note.setObjectName("MutedLabel")
         whitelist_layout.addWidget(note)
         whitelist_actions = QHBoxLayout()
         self.whitelist_add = QPushButton("添加程序…")
-        self.whitelist_add_regex = QPushButton("添加名称规则…")
+        self.whitelist_add_regex = QPushButton("按名称添加…")
         self.whitelist_rename = QPushButton("修改名称")
         self.whitelist_toggle = QPushButton("启用 / 停用")
         self.whitelist_remove = QPushButton("删除")
@@ -284,7 +284,7 @@ class ResourcesPage(QWidget):
         self.selected_day = selected
         self.page_state["selected_day"] = selected.isoformat()
         self._update_day_label()
-        self.summary.setText("正在读取资源历史…")
+        self.summary.setText("正在载入记录…")
         self.service.request_day(selected, self.start_hour)
 
     def _update_day_label(self) -> None:
@@ -301,13 +301,12 @@ class ResourcesPage(QWidget):
             ram = [float(row.get("ram", 0)) for row in rows]
             used = [memory_values(row)[0] for row in rows]
             abnormal = sum(bool(row.get("abnormal")) for row in rows)
-            cache_text = " · 缓存命中" if snapshot.from_cache else ""
-            self.summary.setText(f"采样 {len(rows)} 点 · 内存 {min(ram):.0f}%–{max(ram):.0f}% · 峰值已用 {max(used)/1024:.1f} GB · 异常 {abnormal}{cache_text}")
+            self.summary.setText(f"共 {len(rows)} 次记录 · 内存 {min(ram):.0f}%–{max(ram):.0f}% · 最高已用 {max(used)/1024:.1f} GB · 过高 {abnormal} 次")
         else:
-            self.summary.setText("这一天还没有资源采样。")
+            self.summary.setText("这一天还没有资源记录。")
 
     def _on_failed(self, request_id: int, message: str) -> None:
-        self.summary.setText(f"资源历史读取失败：{message}")
+        self.summary.setText(f"无法读取资源记录：{message}")
 
     def _show_detail(self, row: dict) -> None:
         if not row:
@@ -330,12 +329,12 @@ class ResourcesPage(QWidget):
     def _render_whitelist(self) -> None:
         self.whitelist.clear()
         if not self._whitelist_rows:
-            self.whitelist.addItem("尚未配置资源白名单")
+            self.whitelist.addItem("还没有添加程序")
             return
         for index, row in enumerate(self._whitelist_rows):
             enabled = bool(row.get("enabled", True))
             pattern = str(row.get("process_regex") or "")
-            target = f"名称正则 · {pattern}" if pattern else (row.get("path") or row.get("process_name") or "未指定路径")
+            target = f"名称规则 · {pattern}" if pattern else (row.get("path") or row.get("process_name") or "未指定路径")
             text = f"{'●' if enabled else '○'}  {row.get('name') or row.get('process_name') or '程序'}\n    {target}"
             item = QListWidgetItem(text)
             item.setData(Qt.ItemDataRole.UserRole, index)
@@ -346,22 +345,22 @@ class ResourcesPage(QWidget):
     def _selected_whitelist_index(self) -> int | None:
         item = self.whitelist.currentItem()
         if item is None:
-            QMessageBox.information(self, "请选择程序", "请先选中一个白名单程序。")
+            QMessageBox.information(self, "请选择程序", "请先选择一个程序。")
             return None
         value = item.data(Qt.ItemDataRole.UserRole)
         if not isinstance(value, int) or not 0 <= value < len(self._whitelist_rows):
-            QMessageBox.information(self, "请选择程序", "请先选中一个白名单程序。")
+            QMessageBox.information(self, "请选择程序", "请先选择一个程序。")
             return None
         return value
 
     def _add_whitelist(self) -> None:
-        path, _filter = QFileDialog.getOpenFileName(self, "选择要加入白名单的程序", "", "可执行文件 (*.exe);;所有文件 (*.*)")
+        path, _filter = QFileDialog.getOpenFileName(self, "选择需要减少占用提醒的程序", "", "程序文件 (*.exe);;所有文件 (*.*)")
         if not path:
             return
         executable = Path(path)
         identity = os.path.normcase(os.path.abspath(path))
         if any(os.path.normcase(os.path.abspath(str(row.get("path") or ""))) == identity for row in self._whitelist_rows if row.get("path")):
-            QMessageBox.information(self, "已经存在", "这个程序已经在资源白名单中。")
+            QMessageBox.information(self, "已经存在", "这个程序已经在名单里。")
             return
         self._whitelist_rows.append({"name": executable.stem, "process_name": executable.name, "path": str(executable), "enabled": True})
         self._render_whitelist()
@@ -371,17 +370,17 @@ class ResourcesPage(QWidget):
     def _add_regex_whitelist(self) -> None:
         pattern, accepted = QInputDialog.getText(
             self,
-            "添加进程名称规则",
-            "正则表达式（匹配完整进程名；例如 .*GTAV.*）：",
+            "按程序名称添加",
+            "输入名称匹配规则，例如 .*GTAV.*（表示名称中包含 GTAV）：",
         )
         pattern = pattern.strip()
         if not accepted or not pattern:
             return
         if not valid_process_regex(pattern):
-            QMessageBox.warning(self, "正则无效", "这个正则表达式无法解析，请检查括号、方括号和反斜杠。")
+            QMessageBox.warning(self, "规则无法使用", "这个名称规则无法识别，请检查后再试。")
             return
         if any(str(row.get("process_regex") or "").casefold() == pattern.casefold() for row in self._whitelist_rows):
-            QMessageBox.information(self, "已经存在", "这个进程名称规则已经在资源白名单中。")
+            QMessageBox.information(self, "已经存在", "这个名称规则已经在名单里。")
             return
         name, named = QInputDialog.getText(self, "规则显示名称", "显示名称：", text=pattern)
         if not named:
@@ -424,7 +423,7 @@ class ResourcesPage(QWidget):
         if index is None:
             return
         row = self._whitelist_rows[index]
-        if QMessageBox.question(self, "删除白名单程序", f"确定删除“{row.get('name') or row.get('process_name')}”吗？") != QMessageBox.StandardButton.Yes:
+        if QMessageBox.question(self, "从名单中删除", f"确定删除“{row.get('name') or row.get('process_name')}”吗？") != QMessageBox.StandardButton.Yes:
             return
         self._whitelist_rows.pop(index)
         self._render_whitelist()
@@ -446,7 +445,7 @@ class ResourcesPage(QWidget):
         self._set_whitelist_actions_enabled(True)
         self.whitelist_status.setText(message)
         if not ok:
-            QMessageBox.warning(self, "白名单保存失败", message)
+            QMessageBox.warning(self, "名单没有保存成功", message)
 
     def _set_whitelist_actions_enabled(self, enabled: bool) -> None:
         for button in (self.whitelist_add, self.whitelist_add_regex, self.whitelist_rename, self.whitelist_toggle, self.whitelist_remove):

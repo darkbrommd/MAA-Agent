@@ -88,7 +88,7 @@ class ResourceChart(QWidget):
             painter.drawText(QRectF(plot.left() + 72, 0, 70, 18), "CPU")
         else:
             painter.setPen(QColor(self._tokens.muted))
-            painter.drawText(plot, Qt.AlignmentFlag.AlignCenter, "这一天还没有资源采样")
+            painter.drawText(plot, Qt.AlignmentFlag.AlignCenter, "这一天还没有资源记录")
         painter.end()
         self._pixmap = pixmap
 

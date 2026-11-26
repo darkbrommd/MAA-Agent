@@ -23,7 +23,7 @@ if str(APP_DIR) not in sys.path:
 
 from PySide6.QtCore import QCoreApplication, QEventLoop, QObject, QPoint, QPointF, QRect, QThreadPool, Qt, Signal
 from PySide6.QtGui import QImage, QPainter, QWheelEvent
-from PySide6.QtWidgets import QApplication, QLabel, QLineEdit
+from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QPushButton
 
 from gui.components.resource_chart import ResourceChart
 from gui.components.dialogs import ResourceDetailDialog, ScheduleErrorDialog
@@ -41,7 +41,7 @@ from gui.pages.resources import _WhitelistSaveWorker
 from gui.pages.schedule import SchedulePage, _OverrideWorker
 from gui.resource_paths import resource_path
 from gui.services.dashboard_service import DashboardSnapshot, dashboard_source_signature, load_dashboard_snapshot
-from gui.services.config_service import atomic_save_config_file, masked_config
+from gui.services.config_service import atomic_save_config_file
 from gui.services import agent_control_service
 from gui.services.log_service import line_matches, read_log_chunk
 from gui.services.news_service import NewsSnapshot
@@ -141,7 +141,28 @@ class GuiV2Tests(unittest.TestCase):
         )
         self.assertEqual(result.stdout.strip(), "False")
 
-    def test_config_service_saves_atomically_with_backup_and_masks_secrets(self):
+    def test_user_facing_copy_avoids_internal_jargon(self):
+        paths = (
+            APP_DIR / "gui" / "main_window.py",
+            APP_DIR / "gui" / "first_run_wizard.py",
+            APP_DIR / "gui" / "pages" / "settings" / "page.py",
+            APP_DIR / "gui" / "pages" / "dashboard.py",
+            APP_DIR / "gui" / "pages" / "schedule.py",
+            APP_DIR / "gui" / "pages" / "resources.py",
+            APP_DIR / "gui" / "pages" / "news.py",
+            APP_DIR / "gui" / "pages" / "logs.py",
+            APP_DIR / "gui" / "components" / "dialogs.py",
+            APP_DIR / "gui" / "services" / "schedule_service.py",
+        )
+        source = "\n".join(path.read_text(encoding="utf-8") for path in paths)
+        for forbidden in (
+            "监督预期", "代理健康检查", "本地缓存", "增量更新", "全部重拉",
+            "资源采样", "缓存命中", "运行记录长时间没有终态", "启动证据",
+            "正常停止当前 Agent", "PySide6 GUI", "稳定 Tk GUI",
+        ):
+            self.assertNotIn(forbidden, source)
+
+    def test_config_service_saves_atomically_with_backup(self):
         with tempfile.TemporaryDirectory() as temporary:
             base_dir = Path(temporary)
             path = base_dir / "config" / "config.json"
@@ -152,10 +173,6 @@ class GuiV2Tests(unittest.TestCase):
             atomic_save_config_file(base_dir, updated)
             self.assertEqual(json.loads(path.read_text(encoding="utf-8")), updated)
             self.assertEqual(json.loads(path.with_suffix(".json.bak").read_text(encoding="utf-8")), original)
-            shown = json.dumps(masked_config(updated), ensure_ascii=False)
-            self.assertNotIn("new-secret", shown)
-            self.assertNotIn("ai-secret", shown)
-            self.assertIn("••••••••", shown)
 
     def test_first_run_wizard_defaults_and_legacy_detection(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -196,16 +213,23 @@ class GuiV2Tests(unittest.TestCase):
             page = window._pages["settings"]
             page.service.wait()
             process_events(100)
-            self.assertEqual(page.section_stack.count(), 7)
+            self.assertEqual(page.section_stack.count(), 6)
+            section_names = [page.section_list.item(index).text() for index in range(page.section_list.count())]
+            self.assertNotIn("全部配置", section_names)
             self.assertEqual(page.instance_count.currentIndex(), 0)
             self.assertTrue(page.instance_cards["MAA2"].isHidden())
             proxy_toggles = page._toggles["enable_proxy_healthcheck"]
             self.assertEqual(len(proxy_toggles), 2)
             proxy_toggles[0].toggled.emit(False)
             self.assertTrue(all(not toggle.isChecked() for toggle in proxy_toggles))
-            page._refresh_all_config()
-            self.assertNotIn("must-not-appear", page.all_config_text.toPlainText())
             self.assertEqual(page._line_edits["bark_key"].echoMode(), QLineEdit.EchoMode.Password)
+            visible_copy = "\n".join(
+                [widget.text() for widget in page.findChildren(QLabel)]
+                + [widget.text() for widget in page.findChildren(QPushButton)]
+                + section_names
+            )
+            for forbidden in ("config.json", "全部配置", "代理健康检查", "监督预期", "下一轮读取", "MAA 实例"):
+                self.assertNotIn(forbidden, visible_copy)
             collected = page._collect()
             self.assertEqual(collected["launch_paths"]["MAA1"], "D:/custom/start-maa.cmd")
             self.assertEqual(collected["maa_gui_config_paths"]["MAA1"], "D:/custom/gui.json")
@@ -213,6 +237,8 @@ class GuiV2Tests(unittest.TestCase):
             page.instance_count.setCurrentIndex(1)
             self.assertFalse(page.instance_cards["MAA2"].isHidden())
             window._allow_close = True
+            window.process_timer.stop()
+            window.process_service.wait()
             window.close()
             process_events(80)
 
@@ -239,6 +265,8 @@ class GuiV2Tests(unittest.TestCase):
             self.assertTrue(active)
             self.assertTrue(all(item.page == window._current_page for item in active))
             window._allow_close = True
+            window.process_timer.stop()
+            window.process_service.wait()
             window.close()
 
     def test_failed_schedule_state_has_priority_and_next_is_unique(self):
@@ -508,7 +536,7 @@ class GuiV2Tests(unittest.TestCase):
             missing = _OverrideWorker(base_dir, {**item, "override": stale_override}, "clear", None)
             missing.signals.done.connect(messages.append)
             missing.run()
-            self.assertIn("已不存在", messages[0])
+            self.assertIn("已经不存在", messages[0])
 
     def test_refresh_manager_runs_only_visible_active_page(self):
         manager = RefreshManager()
@@ -571,7 +599,7 @@ class GuiV2Tests(unittest.TestCase):
         ]
         snapshot = _build_snapshot({}, rows)
         names = [item.name for item in snapshot.top_processes]
-        self.assertEqual(names, ["服务主机：WpnUserService_123", "服务主机：BITS", "ChatGPT.exe"])
+        self.assertEqual(names, ["Windows 服务：WpnUserService_123", "Windows 服务：BITS", "ChatGPT.exe"])
         self.assertNotIn("svchost.exe", names)
         self.assertTrue(all(item.process_count == 1 for item in snapshot.top_processes))
 
@@ -581,7 +609,7 @@ class GuiV2Tests(unittest.TestCase):
                 patch.object(agent_control_service.subprocess, "Popen") as launch:
             ok, message = agent_control_service.start_agent_process(Path(temporary))
         self.assertFalse(ok)
-        self.assertIn("321", message)
+        self.assertEqual(message, "Agent 已经在运行。")
         launch.assert_not_called()
 
     def test_agent_restart_starts_only_after_normal_stop(self):
@@ -703,7 +731,7 @@ class GuiV2Tests(unittest.TestCase):
             page._render_logs()
             self.assertEqual(page.log_view.placeholderText(), "（最近没有事故、异常或恢复记录）")
             page._clear_home_log()
-            self.assertIn("此前事件已隐藏", page.log_view.placeholderText())
+            self.assertIn("此前记录已从主页隐藏", page.log_view.placeholderText())
             page.close()
 
     def test_dashboard_schedule_uses_day_header_and_fixed_height_cards(self):
@@ -771,8 +799,8 @@ class GuiV2Tests(unittest.TestCase):
             "memory_available_mb": 2000, "memory_total_mb": 32000, "abnormal": True,
             "abnormal_reasons": ["内存达到阈值"], "top_apps": [{"name": "Game.exe", "mb": 4096, "count": 1}],
         })
-        self.assertEqual(resource.windowTitle(), "资源采样详细分析")
-        self.assertTrue(any(label.text() == "按应用归并的内存大户" for label in resource.findChildren(QLabel)))
+        self.assertEqual(resource.windowTitle(), "内存占用详情")
+        self.assertTrue(any(label.text() == "占用内存较多的程序" for label in resource.findChildren(QLabel)))
         schedule.close()
         resource.close()
 
@@ -866,6 +894,8 @@ class GuiV2Tests(unittest.TestCase):
             self.assertIsInstance(window._pages["dashboard"], DashboardPage)
             self.assertIsInstance(window._pages["news"], NewsPage)
             self.assertEqual(window._pages["logs"].view.maximumBlockCount(), 5000)
+            window.process_timer.stop()
+            window.process_service.wait()
             window.close()
             process_events(100)
         QThreadPool.globalInstance().waitForDone(3000)
@@ -896,6 +926,8 @@ class GuiV2Tests(unittest.TestCase):
                 self.assertEqual(button.text(), "")
                 self.assertFalse(button.icon().isNull())
                 self.assertTrue(button.toolTip())
+            window.process_timer.stop()
+            window.process_service.wait()
             window.close()
 
 

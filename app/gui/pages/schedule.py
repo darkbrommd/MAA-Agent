@@ -53,9 +53,9 @@ class _OverrideWorker(QRunnable):
                         original_dt=self.item.get("original_datetime") or self.item["datetime"],
                     )
                 if removed:
-                    self.signals.done.emit("已撤销本次例外；MAA 自己的定时器没有修改。")
+                    self.signals.done.emit("已恢复这次计划的提醒。")
                 else:
-                    self.signals.done.emit("本次例外已不存在，列表已刷新。")
+                    self.signals.done.emit("这次调整已经不存在，列表已更新。")
             else:
                 add_override(
                     self.base_dir,
@@ -66,7 +66,7 @@ class _OverrideWorker(QRunnable):
                     new_dt=self.target,
                     note="MAA Agent 2.0 GUI",
                 )
-                self.signals.done.emit("本次监督预期已更新；MAA 自己的定时器没有修改。")
+                self.signals.done.emit("这次提醒已更新。")
         except Exception as exc:
             self.signals.failed.emit(str(exc))
 
@@ -148,7 +148,7 @@ class SchedulePage(QWidget):
         toolbar.addWidget(now_button)
         toolbar.addStretch(1)
         root.addLayout(toolbar)
-        hint = QLabel("直接使用卡片开关、修改时间或撤销例外；这些操作只调整 Agent 监督预期，不修改 MAA 定时器。")
+        hint = QLabel("用开关决定这次计划是否提醒，也可以修改这次提醒的时间。MAA 里的计划照常运行。")
         hint.setObjectName("MutedLabel")
         root.addWidget(hint)
         self.status = QLabel("正在读取日程…")
@@ -375,7 +375,7 @@ class SchedulePage(QWidget):
 
     def move_occurrence(self, item: dict) -> None:
         default = item["datetime"].strftime("%Y-%m-%d %H:%M")
-        value, accepted = QInputDialog.getText(self, "修改本次预期时间", "输入 YYYY-MM-DD HH:MM（可跨天）：", text=default)
+        value, accepted = QInputDialog.getText(self, "修改这次提醒时间", "输入 YYYY-MM-DD HH:MM（可以跨天）：", text=default)
         if not accepted:
             return
         try:

@@ -307,7 +307,7 @@ class ResourceService(QObject):
             self.failed.emit(outcome.request_id, outcome.error)
             return
         if outcome.snapshot is None:
-            self.failed.emit(outcome.request_id, "资源快照为空")
+            self.failed.emit(outcome.request_id, "没有可显示的资源记录")
             return
 
         self.loaded.emit(outcome.request_id, outcome.snapshot)

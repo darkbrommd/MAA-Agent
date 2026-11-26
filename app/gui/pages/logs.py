@@ -137,7 +137,7 @@ class LogsPage(QWidget):
         self.view.setMaximumBlockCount(5000)
         self.view.setToolTip("Ctrl + 加号/减号或 Ctrl + 鼠标滚轮调节字号；Ctrl + 0 恢复默认。")
         root.addWidget(self.view, 1)
-        self.status = QLabel("增量读取；不会清空重插已有内容。")
+        self.status = QLabel("新日志会自动显示在这里。")
         self.status.setObjectName("MutedLabel")
         root.addWidget(self.status)
 
@@ -163,7 +163,7 @@ class LogsPage(QWidget):
                         self.view.appendPlainText(line)
                 self._scroll_if_following()
         label = LOG_LABELS.get(chunk.filename, chunk.filename)
-        self.status.setText(f"{label} · 已读到 {chunk.offset:,} 字节" if chunk.exists else f"{label} 尚不存在")
+        self.status.setText(f"{label} · 已更新到最新内容" if chunk.exists else f"{label} 尚不存在")
 
     def _render(self, *_args) -> None:
         mode = self.mode.currentText()
@@ -193,7 +193,7 @@ class LogsPage(QWidget):
         self._scroll_if_following()
 
     def _update_follow_button(self) -> None:
-        self.follow.setText("暂停自动滚底" if self._follow else "恢复自动滚底")
+        self.follow.setText("暂停跟随最新" if self._follow else "跟随最新")
 
     def _scroll_if_following(self) -> None:
         if self._follow:

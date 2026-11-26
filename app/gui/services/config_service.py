@@ -11,21 +11,18 @@ from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 from project_paths import config_path
 
 
-SECRET_KEYS = {"bark_key", "ai_api_key", "deepseek_api_key", "openai_api_key"}
-
-
 def load_config_file(base_dir: Path) -> dict:
     path = config_path(base_dir)
     with path.open("r", encoding="utf-8") as handle:
         data = json.load(handle)
     if not isinstance(data, dict):
-        raise ValueError("config.json 顶层必须是对象。")
+        raise ValueError("设置文件格式不正确。")
     return data
 
 
 def atomic_save_config_file(base_dir: Path, data: dict) -> Path:
     if not isinstance(data, dict):
-        raise ValueError("配置必须是 JSON 对象。")
+        raise ValueError("设置内容格式不正确。")
     path = config_path(base_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -35,7 +32,7 @@ def atomic_save_config_file(base_dir: Path, data: dict) -> Path:
     try:
         parsed = json.loads(temporary.read_text(encoding="utf-8"))
         if not isinstance(parsed, dict):
-            raise ValueError("写入后的配置不是 JSON 对象。")
+            raise ValueError("保存后的设置格式不正确。")
         if path.exists():
             shutil.copy2(path, backup)
         os.replace(temporary, path)
@@ -43,14 +40,6 @@ def atomic_save_config_file(base_dir: Path, data: dict) -> Path:
         temporary.unlink(missing_ok=True)
         raise
     return path
-
-
-def masked_config(data: dict) -> dict:
-    result = deepcopy(data)
-    for key in SECRET_KEYS:
-        if key in result and result[key]:
-            result[key] = "••••••••"
-    return result
 
 
 class _WorkerSignals(QObject):

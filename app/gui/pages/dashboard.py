@@ -43,7 +43,7 @@ class _OverviewProcessCard(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 11, 14, 11)
         layout.setSpacing(4)
-        heading = QLabel(f"应用内存 #{rank}")
+        heading = QLabel(f"内存占用 #{rank}")
         heading.setObjectName("MutedLabel")
         layout.addWidget(heading)
         self.name = QLabel("读取中…")
@@ -60,7 +60,7 @@ class _OverviewProcessCard(QFrame):
             return
         self.name.setText(process.name)
         memory = f"{process.memory_mb / 1024:.2f} GB" if process.memory_mb >= 1024 else f"{process.memory_mb:.0f} MB"
-        suffix = f"{process.process_count} 个进程" if process.process_count > 1 else f"PID {process.pid}"
+        suffix = f"{process.process_count} 个进程" if process.process_count > 1 else "单个进程"
         self.value.setText(f"{memory} · {suffix}")
 
 
@@ -89,7 +89,7 @@ class _DashboardOverrideWorker(QRunnable):
                         label=str(self.item["label"]),
                         original_dt=self.item.get("original_datetime") or self.item["datetime"],
                     )
-                message = "已恢复本次监督；MAA 定时器没有修改。"
+                message = "已恢复这次计划的提醒。"
             else:
                 add_override(
                     self.base_dir,
@@ -99,7 +99,7 @@ class _DashboardOverrideWorker(QRunnable):
                     "skip",
                     note="MAA Agent 2.0 总览",
                 )
-                message = "已关闭本次监督；MAA 定时器没有修改。"
+                message = "这次计划不再提醒。"
             self.signals.done.emit(message)
         except Exception as exc:
             self.signals.failed.emit(str(exc))
@@ -188,9 +188,9 @@ class DashboardPage(QWidget):
         self.chart_toggle.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.chart_toggle.clicked.connect(self._toggle_chart)
         tools.addWidget(self.chart_toggle)
-        clear = QPushButton("清空主页显示")
+        clear = QPushButton("隐藏这些记录")
         clear.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        clear.setToolTip("只从主页隐藏此前事件，不删除 logs/agent.log，也不影响日志中心。")
+        clear.setToolTip("只清空这里的显示，完整记录仍保留在日志中心。")
         clear.clicked.connect(self._clear_home_log)
         tools.addWidget(clear)
         activity_layout.addLayout(tools)
@@ -332,7 +332,7 @@ class DashboardPage(QWidget):
         layout.addWidget(content, 1)
         toggle = ToggleSwitch(not bool(row.get("skipped")), self._theme)
         toggle.setFixedSize(46, 26)
-        toggle.setToolTip("只调整 Agent 对这一次计划的监督预期，不修改 MAA 定时器。")
+        toggle.setToolTip("关闭后不再提醒这一次计划。")
         toggle.toggled.connect(lambda enabled, value=dict(row), switch=toggle: self._toggle_plan(value, switch, enabled))
         layout.addWidget(toggle)
         self.schedule_list.setItemWidget(item, widget)
@@ -360,7 +360,7 @@ class DashboardPage(QWidget):
             toggle, original = pending
             toggle.setEnabled(True)
             toggle.setChecked(original)
-        self.status_label.setText(f"监督设置保存失败：{message}")
+        self.status_label.setText(f"这次计划没有保存成功：{message}")
         self._last_static_refresh = 0.0
         self.refresh_tick(force=True)
 
@@ -395,7 +395,7 @@ class DashboardPage(QWidget):
         if values:
             self.log_view.setPlaceholderText("")
         elif self.page_state.get("log_cutoff"):
-            self.log_view.setPlaceholderText("主页此前事件已隐藏；源日志仍完整保留。")
+            self.log_view.setPlaceholderText("此前记录已从主页隐藏。")
         else:
             self.log_view.setPlaceholderText("（最近没有事故、异常或恢复记录）")
         self.log_view.verticalScrollBar().setValue(self.log_view.verticalScrollBar().maximum())
@@ -407,7 +407,7 @@ class DashboardPage(QWidget):
     def _clear_home_log(self) -> None:
         self.page_state["log_cutoff"] = datetime.now().isoformat(timespec="seconds")
         self.log_view.clear()
-        self.log_view.setPlaceholderText("主页此前事件已隐藏；源日志仍完整保留。")
+        self.log_view.setPlaceholderText("此前记录已从主页隐藏。")
 
     def _toggle_chart(self) -> None:
         visible = not self.chart.isVisible()

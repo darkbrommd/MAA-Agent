@@ -87,16 +87,16 @@ class NewsPage(QWidget):
         title.setObjectName("PageTitle")
         header.addWidget(title)
         header.addStretch(1)
-        self.incremental = QPushButton("增量更新")
+        self.incremental = QPushButton("检查新公告")
         self.incremental.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.incremental.clicked.connect(self._refresh_incremental)
-        self.full = QPushButton("全部重拉")
+        self.full = QPushButton("重新获取全部")
         self.full.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.full.clicked.connect(self._refresh_full)
         header.addWidget(self.incremental)
         header.addWidget(self.full)
         root.addLayout(header)
-        self.status = QLabel("正在读取本地缓存…")
+        self.status = QLabel("正在载入公告…")
         self.status.setObjectName("MutedLabel")
         root.addWidget(self.status)
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -132,13 +132,13 @@ class NewsPage(QWidget):
     def _refresh_incremental(self) -> None:
         self._requested_mode = "incremental"
         if self.service.refresh(full=False):
-            self.status.setText("正在增量更新；遇到已缓存公告会尽快停止。")
+            self.status.setText("正在检查新公告…")
 
     def _refresh_full(self) -> None:
         answer = QMessageBox.question(
             self,
-            "全部重拉",
-            "全部重拉会访问更多官网页面，耗时和流量都高于增量更新。确定继续吗？",
+            "重新获取全部公告",
+            "重新获取全部公告会打开更多官网页面，需要更多时间和流量。确定继续吗？",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -146,7 +146,7 @@ class NewsPage(QWidget):
             return
         self._requested_mode = "full"
         if self.service.refresh(full=True):
-            self.status.setText("正在全部重拉…")
+            self.status.setText("正在重新获取全部公告…")
 
     def _apply_snapshot(self, snapshot: NewsSnapshot) -> None:
         current = self.model.item(self.list.currentIndex().row())
@@ -162,18 +162,18 @@ class NewsPage(QWidget):
             self.list.setCurrentIndex(index)
             self._show_current(index)
         else:
-            self.detail.setPlainText("本地还没有公告缓存，可点击“增量更新”。")
+            self.detail.setPlainText("还没有公告，可点击“检查新公告”。")
         self.list.verticalScrollBar().setValue(list_scroll)
         self.detail.verticalScrollBar().setValue(detail_scroll)
         if self._requested_mode == "local":
-            self.status.setText(f"本地缓存 {snapshot.total} 条 · 更新于 {snapshot.updated_at}")
+            self.status.setText(f"已保存 {snapshot.total} 条 · 更新于 {snapshot.updated_at}")
         else:
-            verb = "全部重拉" if self._requested_mode == "full" else "增量更新"
+            verb = "重新获取" if self._requested_mode == "full" else "更新"
             self.status.setText(f"{verb}完成 · 新增 {snapshot.new_count} 条 · 共 {snapshot.total} 条")
         if snapshot.errors:
-            self.status.setText(self.status.text() + f" · {len(snapshot.errors)} 个页面失败")
+            self.status.setText(self.status.text() + f" · {len(snapshot.errors)} 篇没有获取成功")
         if snapshot.missing_content:
-            self.status.setText(self.status.text() + f" · 还有 {snapshot.missing_content} 条正文待补，可再次增量更新")
+            self.status.setText(self.status.text() + f" · 还有 {snapshot.missing_content} 篇正文未获取，可再点一次“检查新公告”")
         self._requested_mode = "local"
 
     def _show_current(self, index, _previous=None) -> None:
@@ -187,7 +187,7 @@ class NewsPage(QWidget):
         body = str(item.get("body") or item.get("content") or "")
         url = escape(str(item.get("url") or ""), quote=True)
         link = f'<p><a href="{url}">在浏览器打开原文</a></p>' if url else ""
-        content = format_news_body_html(body) if body else f'<p>{brief}</p><p><i>本地还没有完整正文，可点击“增量更新”补齐。</i></p>'
+        content = format_news_body_html(body) if body else f'<p>{brief}</p><p><i>当前只有摘要，可点击“检查新公告”获取正文。</i></p>'
         self.detail.setHtml(
             "<style>p{line-height:1.55;margin:8px 0;} h2{margin-bottom:4px;} "
             "h3{margin:16px 0 4px;} li{margin:5px 0;}</style>"

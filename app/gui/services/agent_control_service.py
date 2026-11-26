@@ -33,13 +33,13 @@ def _agent_python(base_dir: Path) -> Path:
 def start_agent_process(base_dir: Path) -> tuple[bool, str]:
     running = validated_agent_for_dir(base_dir)
     if running:
-        return False, f"Agent 已在运行（PID {running['pid']}）。"
+        return False, "Agent 已经在运行。"
     others = [
         row for row in find_running_agents()
         if not is_script_for_installation(row["script"], base_dir)
     ]
     if others:
-        return False, f"检测到另一份 Agent：{others[0]['script']}（PID {others[0]['pid']}）。"
+        return False, "检测到另一份 Agent 正在运行，请先关闭后再试。"
     try:
         entry = agent_entry_path(base_dir)
         packaged = entry.suffix.lower() == ".exe"
@@ -55,7 +55,7 @@ def start_agent_process(base_dir: Path) -> tuple[bool, str]:
             close_fds=True,
             env=environment,
         )
-        return True, "启动请求已发送。"
+        return True, "Agent 正在启动。"
     except OSError as exc:
         return False, f"启动失败：{exc}"
 

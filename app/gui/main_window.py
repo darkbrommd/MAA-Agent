@@ -38,7 +38,7 @@ class _PlaceholderPage(QWidget):
         heading = QLabel(title)
         heading.setObjectName("PageTitle")
         layout.addWidget(heading)
-        note = QLabel("这个页面将在后续阶段迁移；当前旧版功能保持不变。")
+        note = QLabel("这个页面暂时没有内容。")
         note.setObjectName("MutedLabel")
         layout.addWidget(note)
         layout.addStretch(1)
@@ -70,7 +70,7 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self.app_state.theme_changed.connect(self._apply_theme)
         self._apply_theme(self._theme)
-        self.setWindowTitle("MAA Agent 2.0 Preview")
+        self.setWindowTitle("MAA Agent 2.0")
         self.resize(1320, 860)
         self.setMinimumSize(1040, 700)
         self.show_page("schedule")
@@ -227,7 +227,7 @@ class MainWindow(QMainWindow):
                 placeholder.setObjectName("StatusPill")
                 self._maa_pills[""] = placeholder
                 self.maa_status_layout.addWidget(placeholder)
-            self._set_status_pill(placeholder, "MAA · 未配置", "stopped")
+            self._set_status_pill(placeholder, "MAA · 未设置", "stopped")
             return
         placeholder = self._maa_pills.pop("", None)
         if placeholder is not None:
@@ -256,7 +256,7 @@ class MainWindow(QMainWindow):
             self.agent_control.run("start")
 
     def _confirm_agent_action(self, action: str) -> None:
-        text = "正常停止当前 Agent？MAA 和 MuMu 不会被关闭。" if action == "stop" else "正常停止并重新启动当前 Agent？MAA 和 MuMu 不会被关闭。"
+        text = "要停止 Agent 吗？MAA 和 MuMu 会继续运行。" if action == "stop" else "要重新启动 Agent 吗？MAA 和 MuMu 会继续运行。"
         if QMessageBox.question(self, "停止 Agent" if action == "stop" else "重启 Agent", text) == QMessageBox.StandardButton.Yes:
             self.agent_control.run(action)
 
@@ -331,7 +331,7 @@ class MainWindow(QMainWindow):
         self.hide()
         self._set_refresh_visibility(False)
         if self._tray is not None:
-            self._tray.show_message("MAA Agent", "管理器已隐藏到托盘；后台 Agent 继续运行。")
+            self._tray.show_message("MAA Agent", "已收起到任务栏右下角，后台任务会继续运行。")
 
     def show_from_tray(self) -> None:
         self.showNormal()

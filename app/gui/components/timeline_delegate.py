@@ -246,7 +246,7 @@ class TimelineDelegate(QStyledItemDelegate):
 
         self._draw_button(painter, layout.error_button, "查看错误", tokens.danger, background)
         self._draw_button(painter, layout.move_button, "修改时间", tokens.accent, background)
-        self._draw_button(painter, layout.clear_button, "撤销例外", tokens.muted, background)
+        self._draw_button(painter, layout.clear_button, "恢复计划", tokens.muted, background)
         painter.restore()
 
     def editorEvent(self, event, model, option, index) -> bool:

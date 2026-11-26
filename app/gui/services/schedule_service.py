@@ -62,10 +62,10 @@ def decorate_schedule_rows(
         run_status = run.get("status")
         state = "future"
         title = "等待运行"
-        detail = "已加入后续监测"
+        detail = "到点后会提醒"
         error = {}
         if row.get("skipped"):
-            state, title, detail = "off", "已关闭", "本次不纳入运行监测"
+            state, title, detail = "off", "已关闭", "这次计划不会提醒"
         elif run_status == "failed":
             error = dict(run.get("error") or {})
             state, title = "failed", "运行失败"
@@ -78,37 +78,37 @@ def decorate_schedule_rows(
                 fresh = False
             if fresh:
                 state, title = "running", "正在进行"
-                detail = f"当前：{run.get('current_task') or '任务队列'}"
+                detail = f"当前：{run.get('current_task') or '正在执行的任务'}"
             else:
-                state, title, detail = "off", "状态待确认", "运行记录长时间没有终态"
+                state, title, detail = "off", "还没确认结果", "运行状态长时间没有更新"
         elif run_status == "completed":
             completed = str(run.get("completed_at") or "")
             suffix = f" · {completed[11:16]} 完成" if len(completed) >= 16 else ""
-            state, title, detail = "done", "已完成", f"任务队列已正常结束{suffix}"
+            state, title, detail = "done", "已完成", f"任务已完成{suffix}"
         else:
             daily = daily_states.get(when.date(), {})
             expected = when.strftime("%Y-%m-%d %H:%M")
             observed = (daily.get("observed_runs") or {}).get(row["label"], [])
             if any(str(item.get("occurrence")) == expected for item in observed if isinstance(item, dict)):
-                state, title, detail = "done", "已检测启动", "Agent 已收到本次启动证据"
+                state, title, detail = "done", "已经开始", "已确认这次计划启动"
             elif key in alerted_keys:
-                state, title, detail = "failed", "未检测到启动", "计划未触发、程序退出或被运行中任务阻断"
+                state, title, detail = "failed", "可能没有启动", "计划没有触发、程序已退出，或上一个任务还没有结束"
                 error = {
-                    "title": "未检测到计划启动",
-                    "summary": f"{row['label']} 在 {when:%Y-%m-%d %H:%M} 没有检测到启动证据。",
+                    "title": "没有检测到计划启动",
+                    "summary": f"{row['label']} 在 {when:%Y-%m-%d %H:%M} 可能没有启动。",
                     "likely": "计划未触发、MAA/MuMu 已退出，或上一轮任务仍在运行。",
-                    "action": "检查 MAA 定时器、程序状态以及对应时段的 Agent 日志。",
-                    "task": "计划启动监测",
+                    "action": "检查 MAA 里的计划、程序状态和对应时段的日志。",
+                    "task": "计划启动",
                     "time": expected,
                 }
             elif any(expected in str(item) and str(row["label"]) in str(item) for item in (daily.get("schedule") or {}).get("unverified", [])):
-                state, title, detail = "off", "无法核验", "当时 Agent 尚未覆盖该监测时段"
+                state, title, detail = "off", "无法确认", "当时 Agent 还没有运行"
             elif when <= now:
                 delay = now - when
                 if delay <= timedelta(minutes=max(0.0, float(grace_minutes))):
                     state, title, detail = "running", "等待启动确认", "计划已到点，等待 Agent 检测启动"
                 else:
-                    state, title, detail = "off", "等待核验", "尚未收到本次启动证据"
+                    state, title, detail = "off", "等待确认", "还没有确认这次计划启动"
             elif next_time is not None and when == next_time:
                 state, title, detail = "next", "下一个计划", "即将执行"
         row.update(state=state, status_title=title, status_detail=detail, error=error)

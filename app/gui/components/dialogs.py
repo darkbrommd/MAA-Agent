@@ -102,7 +102,7 @@ class ScheduleErrorDialog(QDialog):
         sections = (
             ("失败任务", error.get("task") or "当前任务"),
             ("发生了什么", error.get("summary") or error.get("title") or "任务没有正常完成。"),
-            ("可能原因", error.get("likely") or "没有更多可靠证据。"),
+            ("可能原因", error.get("likely") or "暂时无法确定。"),
             ("建议操作", error.get("action") or "检查当前游戏画面与 MAA 日志。"),
         )
         for heading, value in sections:
@@ -131,8 +131,8 @@ class ResourceDetailDialog(QDialog):
         tokens = DARK if theme == "dark" else LIGHT
         when = datetime.fromtimestamp(float(row.get("epoch", 0)))
         used, _available, total = memory_values(row)
-        reasons = "；".join(str(value) for value in (row.get("abnormal_reasons") or ())) or "这个采样点没有达到异常阈值"
-        self.setWindowTitle("资源采样详细分析")
+        reasons = "；".join(str(value) for value in (row.get("abnormal_reasons") or ())) or "这次检查没有发现明显异常"
+        self.setWindowTitle("内存占用详情")
         self.resize(900, 680)
         self.setMinimumSize(720, 540)
         root = QVBoxLayout(self)
@@ -166,8 +166,8 @@ class ResourceDetailDialog(QDialog):
         metrics.setVerticalSpacing(8)
         metric_rows = (
             ("系统内存", f"{float(row.get('ram', 0)):.0f}%", f"已用 {used / 1024:.2f} / {total / 1024:.2f} GB"),
-            ("Agent", f"{float(row.get('agent_mb', 0)) / 1024:.2f} GB", "后台监督进程"),
-            ("MAA", f"{float(row.get('maa_mb', 0)) / 1024:.2f} GB", f"{row.get('maa_count', 0)}/{row.get('expected_maa_count', '?')} 个实例"),
+            ("Agent", f"{float(row.get('agent_mb', 0)) / 1024:.2f} GB", "后台运行"),
+            ("MAA", f"{float(row.get('maa_mb', 0)) / 1024:.2f} GB", f"{row.get('maa_count', 0)} 个 MAA"),
             ("MuMu", f"{float(row.get('mumu_mb', 0)) / 1024:.2f} GB", f"{row.get('mumu_count', 0)} 个进程"),
         )
         for index, values in enumerate(metric_rows):
@@ -177,25 +177,25 @@ class ResourceDetailDialog(QDialog):
         apps = tuple(row.get("top_apps") or ())
         processes = tuple(row.get("top_processes") or ())
         for section_title, values, grouped in (
-            ("按应用归并的内存大户", apps, True),
-            ("异常发生时的单进程快照", processes, False),
+            ("占用内存较多的程序", apps, True),
+            ("当时的程序明细", processes, False),
         ):
             heading = QLabel(section_title)
             heading.setStyleSheet("font-size: 15px; font-weight: 600;")
             layout.addWidget(heading)
             if not values:
                 empty, empty_layout = _card()
-                text = QLabel("这个采样点没有保存相关进程明细。")
+                text = QLabel("这次记录没有保存程序明细。")
                 text.setObjectName("MutedLabel")
                 empty_layout.addWidget(text)
                 layout.addWidget(empty)
                 continue
             for item in values:
                 if grouped:
-                    subtitle = f"{item.get('category') or '未分类'} · {item.get('count', 1)} 个进程"
+                    subtitle = f"{item.get('category') or '其他'} · {item.get('count', 1)} 个进程"
                 else:
-                    subtitle = f"PID {item.get('pid', '—')} · {item.get('category') or '未分类'}"
-                layout.addWidget(_memory_row(str(item.get("name") or "未知进程"), subtitle, float(item.get("mb", 0)), tokens.success))
+                    subtitle = str(item.get("category") or "其他")
+                layout.addWidget(_memory_row(str(item.get("name") or "未知程序"), subtitle, float(item.get("mb", 0)), tokens.success))
         layout.addStretch(1)
         scroll.setWidget(body)
         root.addWidget(scroll, 1)
