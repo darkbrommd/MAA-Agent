@@ -193,22 +193,31 @@ class ProcessService(QObject):
     def __init__(self, base_dir: Path, thread_pool: QThreadPool | None = None, parent: QObject | None = None):
         super().__init__(parent)
         self.base_dir = Path(base_dir)
-        self.thread_pool = thread_pool or QThreadPool.globalInstance()
+        self.thread_pool = thread_pool or QThreadPool(self)
+        if thread_pool is None:
+            self.thread_pool.setMaxThreadCount(1)
         self._running = False
+        self._worker: _ProcessWorker | None = None
 
     def refresh(self) -> None:
         if self._running:
             return
         self._running = True
         worker = _ProcessWorker(self.base_dir)
+        self._worker = worker
         worker.signals.done.connect(self._finish)
         worker.signals.failed.connect(self._fail)
         self.thread_pool.start(worker)
 
     def _finish(self, snapshot: ProcessSnapshot) -> None:
         self._running = False
+        self._worker = None
         self.snapshot_ready.emit(snapshot)
 
     def _fail(self, message: str) -> None:
         self._running = False
+        self._worker = None
         self.failed.emit(message)
+
+    def wait(self, timeout_ms: int = 5000) -> bool:
+        return self.thread_pool.waitForDone(timeout_ms)

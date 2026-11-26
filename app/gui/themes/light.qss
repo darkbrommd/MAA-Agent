@@ -20,6 +20,8 @@ QPushButton#NavButton[compact="true"] {{ text-align: center; padding: 9px 0; }}
 QLabel#MutedLabel {{ color: {muted}; }}
 QLabel#SectionLabel {{ color: {muted}; font-size: 13px; font-weight: 600; }}
 QLabel#PageTitle {{ font-size: 22px; font-weight: 700; }}
+QLabel#SectionTitle {{ font-size: 18px; font-weight: 700; }}
+QLabel#CardTitle {{ font-size: 15px; font-weight: 700; }}
 QLabel#StatusPill {{ background: {card}; border: 1px solid {border}; border-radius: 12px; padding: 4px 9px; }}
 QLabel#StatusPill[status="running"] {{ background: {next_card}; color: {success}; border-color: {success}; }}
 QLabel#StatusPill[status="warning"] {{ background: {running_card}; color: {warning}; border-color: {warning}; }}
@@ -36,6 +38,10 @@ QListView::item, QListView::item:selected, QListView::item:hover {{ border: 0; p
 QListView::item:selected {{ background: {disabled_background}; color: {accent}; border-radius: 6px; }}
 QListWidget {{ outline: 0; }}
 QListWidget::item {{ padding: 7px; border-bottom: 1px solid {border}; }}
+QListWidget#SettingsSectionList::item {{ padding: 11px 12px; border: 0; border-radius: 7px; }}
+QListWidget#SettingsSectionList::item:selected {{ background: {disabled_background}; color: {accent}; }}
+QScrollArea#SettingsScroll, QScrollArea#SettingsScroll > QWidget > QWidget {{ background: transparent; border: 0; }}
+QFrame#SettingsFooter {{ background: {navigation}; border: 1px solid {border}; border-radius: 9px; }}
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
 QScrollBar::handle:vertical {{ background: {border}; min-height: 30px; border-radius: 4px; }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}

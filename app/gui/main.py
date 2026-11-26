@@ -10,10 +10,14 @@ if __package__ in {None, ""}:
         sys.path.insert(0, str(app_dir))
 
 from PySide6.QtGui import QFont, QIcon
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QDialog
 
+from gui.first_run_wizard import FirstRunWizard, needs_first_run
 from gui.main_window import MainWindow
 from gui.resource_paths import resource_path
+from gui.services.config_service import load_config_file
+from gui.themes.tokens import load_stylesheet
+from gui.tray import TrayController
 
 
 def project_root() -> Path:
@@ -30,11 +34,32 @@ def main() -> int:
     application.setFont(QFont("Microsoft YaHei UI", 10))
     base_dir = project_root()
     icon_path = resource_path("assets", "app_icon.ico")
+    icon = QIcon(str(icon_path)) if icon_path.exists() else QIcon()
     if icon_path.exists():
-        application.setWindowIcon(QIcon(str(icon_path)))
+        application.setWindowIcon(icon)
+    if needs_first_run(base_dir):
+        application.setStyleSheet(load_stylesheet("dark"))
+        wizard = FirstRunWizard(base_dir, "dark")
+        if wizard.exec() != QDialog.DialogCode.Accepted:
+            return 0
+        application.setStyleSheet("")
     window = MainWindow(base_dir)
-    window.show()
-    return application.exec()
+    tray = TrayController(icon, application)
+    window.set_tray_controller(tray)
+    application.setQuitOnLastWindowClosed(not tray.available)
+    start_minimized = False
+    if "--startup" in sys.argv:
+        try:
+            start_minimized = bool(load_config_file(base_dir).get("gui_start_minimized", True))
+        except (OSError, ValueError):
+            start_minimized = False
+    if start_minimized and tray.available:
+        window.hide_to_tray()
+    else:
+        window.show()
+    result = application.exec()
+    tray.shutdown()
+    return result
 
 
 if __name__ == "__main__":

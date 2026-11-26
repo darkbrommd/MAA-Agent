@@ -21,9 +21,9 @@ APP_DIR = ROOT / "app"
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
-from PySide6.QtCore import QCoreApplication, QEventLoop, QPoint, QPointF, QRect, QThreadPool, Qt
+from PySide6.QtCore import QCoreApplication, QEventLoop, QObject, QPoint, QPointF, QRect, QThreadPool, Qt, Signal
 from PySide6.QtGui import QImage, QPainter, QWheelEvent
-from PySide6.QtWidgets import QApplication, QLabel
+from PySide6.QtWidgets import QApplication, QLabel, QLineEdit
 
 from gui.components.resource_chart import ResourceChart
 from gui.components.dialogs import ResourceDetailDialog, ScheduleErrorDialog
@@ -31,6 +31,7 @@ from gui.components.responsive_layout import responsive_card_rect
 from gui.components.timeline_delegate import TimelineDelegate, compute_card_layout
 from gui.components.toggle_switch import ToggleSwitch
 from gui.main_window import MainWindow
+from gui.first_run_wizard import FirstRunWizard, needs_first_run
 from gui.models.news_model import NewsModel
 from gui.pages.dashboard import DashboardPage
 from gui.pages.news import NewsPage, format_news_body_html
@@ -40,6 +41,7 @@ from gui.pages.resources import _WhitelistSaveWorker
 from gui.pages.schedule import SchedulePage, _OverrideWorker
 from gui.resource_paths import resource_path
 from gui.services.dashboard_service import DashboardSnapshot, dashboard_source_signature, load_dashboard_snapshot
+from gui.services.config_service import atomic_save_config_file, masked_config
 from gui.services import agent_control_service
 from gui.services.log_service import line_matches, read_log_chunk
 from gui.services.news_service import NewsSnapshot
@@ -48,6 +50,24 @@ from gui.services.schedule_service import decorate_schedule_rows, occurrence_key
 from gui.state.refresh_manager import RefreshManager
 from gui.state.app_state import AppState
 from gui.themes.tokens import DARK, LIGHT, load_stylesheet
+
+
+class _FakeTray(QObject):
+    show_requested = Signal()
+    hide_requested = Signal()
+    agent_action_requested = Signal(str)
+    quit_requested = Signal()
+
+    def __init__(self):
+        super().__init__()
+        self.available = True
+        self.messages = []
+
+    def show_message(self, title, message):
+        self.messages.append((title, message))
+
+    def shutdown(self):
+        pass
 
 
 def process_events(milliseconds: int = 80) -> None:
@@ -120,6 +140,106 @@ class GuiV2Tests(unittest.TestCase):
             check=True,
         )
         self.assertEqual(result.stdout.strip(), "False")
+
+    def test_config_service_saves_atomically_with_backup_and_masks_secrets(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base_dir = Path(temporary)
+            path = base_dir / "config" / "config.json"
+            path.parent.mkdir(parents=True)
+            original = {"bark_key": "old-secret", "check_interval_seconds": 60}
+            path.write_text(json.dumps(original), encoding="utf-8")
+            updated = {"bark_key": "new-secret", "ai_api_key": "ai-secret", "check_interval_seconds": 30}
+            atomic_save_config_file(base_dir, updated)
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), updated)
+            self.assertEqual(json.loads(path.with_suffix(".json.bak").read_text(encoding="utf-8")), original)
+            shown = json.dumps(masked_config(updated), ensure_ascii=False)
+            self.assertNotIn("new-secret", shown)
+            self.assertNotIn("ai-secret", shown)
+            self.assertIn("••••••••", shown)
+
+    def test_first_run_wizard_defaults_and_legacy_detection(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base_dir = Path(temporary)
+            (base_dir / "config").mkdir()
+            (base_dir / "config" / "config.json").write_text(
+                json.dumps({"maa_instance_dirs": {"MAA1": "D:/MAA"}}), encoding="utf-8"
+            )
+            self.assertFalse(needs_first_run(base_dir))
+            wizard = FirstRunWizard(base_dir)
+            self.assertEqual(wizard.instance_count.currentIndex(), 0)
+            self.assertFalse(wizard.enable_bark.isChecked())
+            self.assertTrue(wizard.maa2_row.isHidden())
+            self.assertTrue(wizard.bark_key.isHidden())
+            wizard.reject()
+
+    def test_settings_syncs_proxy_toggles_hides_maa2_and_masks_keys(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base_dir = Path(temporary)
+            (base_dir / "config").mkdir(parents=True)
+            (base_dir / "state").mkdir()
+            (base_dir / "metadata").mkdir()
+            (base_dir / "metadata" / "VERSION").write_text("2.0.0", encoding="utf-8")
+            config = {
+                "setup_completed": True,
+                "maa_instance_dirs": {"MAA1": "D:/MAA/one"},
+                "maa_instance_aliases": {"MAA1": "主账号"},
+                "maa_gui_config_paths": {"MAA1": "D:/custom/gui.json"},
+                "maa_log_paths": ["D:/custom/asst.log"],
+                "launch_paths": {"MAA1": "D:/custom/start-maa.cmd", "MuMu": "D:/MuMu.exe"},
+                "auto_start_apps_with_agent": {"MAA1": False, "MuMu": False},
+                "enable_proxy_healthcheck": True,
+                "bark_key": "must-not-appear",
+            }
+            (base_dir / "config" / "config.json").write_text(json.dumps(config), encoding="utf-8")
+            window = MainWindow(base_dir)
+            window.show_page("settings")
+            page = window._pages["settings"]
+            page.service.wait()
+            process_events(100)
+            self.assertEqual(page.section_stack.count(), 7)
+            self.assertEqual(page.instance_count.currentIndex(), 0)
+            self.assertTrue(page.instance_cards["MAA2"].isHidden())
+            proxy_toggles = page._toggles["enable_proxy_healthcheck"]
+            self.assertEqual(len(proxy_toggles), 2)
+            proxy_toggles[0].toggled.emit(False)
+            self.assertTrue(all(not toggle.isChecked() for toggle in proxy_toggles))
+            page._refresh_all_config()
+            self.assertNotIn("must-not-appear", page.all_config_text.toPlainText())
+            self.assertEqual(page._line_edits["bark_key"].echoMode(), QLineEdit.EchoMode.Password)
+            collected = page._collect()
+            self.assertEqual(collected["launch_paths"]["MAA1"], "D:/custom/start-maa.cmd")
+            self.assertEqual(collected["maa_gui_config_paths"]["MAA1"], "D:/custom/gui.json")
+            self.assertEqual(collected["maa_log_paths"], ["D:/custom/asst.log"])
+            page.instance_count.setCurrentIndex(1)
+            self.assertFalse(page.instance_cards["MAA2"].isHidden())
+            window._allow_close = True
+            window.close()
+            process_events(80)
+
+    def test_tray_hide_pauses_all_ui_refresh_and_restore_resumes_current_page(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base_dir = Path(temporary)
+            (base_dir / "config").mkdir(parents=True)
+            (base_dir / "state").mkdir()
+            (base_dir / "metadata").mkdir()
+            (base_dir / "metadata" / "VERSION").write_text("2.0.0", encoding="utf-8")
+            (base_dir / "config" / "config.json").write_text(
+                json.dumps({"maa_instance_dirs": {}, "maa_schedule": {}}), encoding="utf-8"
+            )
+            window = MainWindow(base_dir)
+            tray = _FakeTray()
+            window.set_tray_controller(tray)
+            self.assertTrue(window.process_timer.isActive())
+            window.hide_to_tray()
+            self.assertFalse(window.process_timer.isActive())
+            self.assertTrue(all(not item.timer.isActive() for item in window.refresh_manager._registrations))
+            window.show_from_tray()
+            self.assertTrue(window.process_timer.isActive())
+            active = [item for item in window.refresh_manager._registrations if item.timer.isActive()]
+            self.assertTrue(active)
+            self.assertTrue(all(item.page == window._current_page for item in active))
+            window._allow_close = True
+            window.close()
 
     def test_failed_schedule_state_has_priority_and_next_is_unique(self):
         now = datetime(2026, 11, 24, 12, 0)

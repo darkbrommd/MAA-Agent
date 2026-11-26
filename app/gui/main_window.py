@@ -6,6 +6,7 @@ from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
+    QApplication,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -21,6 +22,7 @@ from gui.pages.logs import LogsPage
 from gui.pages.news import NewsPage
 from gui.pages.resources import ResourcesPage
 from gui.pages.schedule import SchedulePage
+from gui.pages.settings import SettingsPage
 from gui.services.agent_control_service import AgentControlService
 from gui.services.process_service import ProcessService, ProcessSnapshot
 from gui.state.app_state import AppState
@@ -62,6 +64,8 @@ class MainWindow(QMainWindow):
         self._latest_process_snapshot: ProcessSnapshot | None = None
         self._maa_pills: dict[str, QLabel] = {}
         self._agent_busy = False
+        self._tray = None
+        self._allow_close = False
         self._theme = self.app_state.theme
         self._build_ui()
         self.app_state.theme_changed.connect(self._apply_theme)
@@ -154,6 +158,10 @@ class MainWindow(QMainWindow):
         if key == "logs":
             page = LogsPage(self.base_dir, self.app_state.page_state(key), self._theme)
             self.refresh_manager.register("logs", 1500, page.refresh)
+            return page
+        if key == "settings":
+            page = SettingsPage(self.base_dir, self.app_state.page_state(key), self._theme)
+            page.config_saved.connect(self.process_service.refresh)
             return page
         title = next((item.label for item in ITEMS if item.key == key), key)
         return _PlaceholderPage(title)
@@ -290,7 +298,17 @@ class MainWindow(QMainWindow):
         super().hideEvent(event)
 
     def closeEvent(self, event) -> None:
+        if self._tray is not None and self._tray.available and not self._allow_close:
+            event.ignore()
+            self.hide_to_tray()
+            return
         self.app_state.flush()
+        self.process_service.wait()
+        for page in self._pages.values():
+            service = getattr(page, "service", None)
+            wait = getattr(service, "wait", None)
+            if callable(wait):
+                wait()
         super().closeEvent(event)
 
     def _set_refresh_visibility(self, visible: bool) -> None:
@@ -301,3 +319,39 @@ class MainWindow(QMainWindow):
                 self.process_service.refresh()
             elif not visible and self.process_timer.isActive():
                 self.process_timer.stop()
+
+    def set_tray_controller(self, tray) -> None:
+        self._tray = tray
+        tray.show_requested.connect(self.show_from_tray)
+        tray.hide_requested.connect(self.hide_to_tray)
+        tray.agent_action_requested.connect(self._tray_agent_action)
+        tray.quit_requested.connect(self.quit_manager)
+
+    def hide_to_tray(self) -> None:
+        self.hide()
+        self._set_refresh_visibility(False)
+        if self._tray is not None:
+            self._tray.show_message("MAA Agent", "管理器已隐藏到托盘；后台 Agent 继续运行。")
+
+    def show_from_tray(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        self._set_refresh_visibility(True)
+        self.refresh_manager.trigger_active()
+
+    def _tray_agent_action(self, action: str) -> None:
+        if action == "start":
+            self.agent_control.run("start")
+            return
+        self.show_from_tray()
+        self._confirm_agent_action(action)
+
+    def quit_manager(self) -> None:
+        self._allow_close = True
+        if self._tray is not None:
+            self._tray.shutdown()
+        self.close()
+        application = QApplication.instance()
+        if application is not None:
+            application.quit()
