@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import re
 from copy import deepcopy
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QComboBox,
     QFileDialog,
     QFormLayout,
@@ -67,6 +69,18 @@ LOCAL_PREVIEWS = {
 }
 
 TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+DIAGNOSTIC_CASES = {
+    "MAA1 未运行": ("maa_missing", "MAA1"),
+    "MAA2 未运行": ("maa_missing", "MAA2"),
+    "Bark 通知": ("bark_transport", ""),
+    "内存不足": ("memory", ""),
+    "磁盘空间不足": ("disk", ""),
+    "网络检查失败": ("proxy", ""),
+    "任务未按时开始": ("schedule", ""),
+    "窗口未响应": ("hung", ""),
+    "Agent 出错": ("agent_error", ""),
+    "官网维护": ("news", ""),
+}
 FIELD_DEFAULTS = {
     "bark_server": "https://api.day.app",
     "bark_retry_attempts": 3,
@@ -80,6 +94,7 @@ FIELD_DEFAULTS = {
     "resource_sample_abnormal_steady_minutes": 5,
     "news_check_times": ["00:05", "12:05"],
     "daily_report_time": "23:50",
+    "schedule_day_start_time": "04:00",
     "check_interval_seconds": 60,
     "startup_process_grace_minutes": 10,
     "process_missing_sustain_minutes": 3,
@@ -119,6 +134,38 @@ class _NoWheelSpinBox(QSpinBox):
         super().wheelEvent(event)
 
 
+class _TimePicker(QWidget):
+    changed = Signal()
+
+    def __init__(self, value: str = "00:00", parent=None):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        self.hour = _NoWheelComboBox()
+        self.hour.addItems([f"{value:02d}" for value in range(25)])
+        self.minute = _NoWheelComboBox()
+        self.minute.addItems([f"{value:02d}" for value in range(60)])
+        layout.addWidget(self.hour)
+        layout.addWidget(QLabel("时"))
+        layout.addWidget(self.minute)
+        layout.addWidget(QLabel("分"))
+        layout.addStretch(1)
+        self.hour.currentIndexChanged.connect(lambda _index: self.changed.emit())
+        self.minute.currentIndexChanged.connect(lambda _index: self.changed.emit())
+        self.set_time(value)
+
+    def set_time(self, value: str) -> None:
+        match = re.fullmatch(r"(\d{1,2}):(\d{2})", str(value or ""))
+        hour, minute = (int(match.group(1)), int(match.group(2))) if match else (0, 0)
+        self.hour.setCurrentIndex(max(0, min(24, hour)))
+        self.minute.setCurrentIndex(max(0, min(59, minute)))
+
+    def time(self) -> str:
+        hour = 0 if self.hour.currentIndex() == 24 else self.hour.currentIndex()
+        return f"{hour:02d}:{self.minute.currentIndex():02d}"
+
+
 class SettingsPage(QWidget):
     config_saved = Signal()
 
@@ -137,8 +184,16 @@ class SettingsPage(QWidget):
         self._loading = False
         self._dirty = False
         self._line_edits: dict[str, QLineEdit] = {}
+        self._spin_boxes: dict[str, QSpinBox] = {}
+        self._time_pickers: dict[str, _TimePicker] = {}
+        self._news_time_rows: list[tuple[QWidget, _TimePicker]] = []
         self._toggles: dict[str, list[ToggleSwitch]] = {}
         self.preview_buttons: dict[str, QPushButton] = {}
+        self._selected_preview = ""
+        self._pending_diagnostic_id = ""
+        self._diagnostic_timer = QTimer(self)
+        self._diagnostic_timer.setInterval(1000)
+        self._diagnostic_timer.timeout.connect(self._poll_diagnostic_result)
         self._timing_kinds = {key: kind for _label, key, kind in TIMING_FIELDS}
         self._build_ui()
         self.service.load()
@@ -247,6 +302,69 @@ class SettingsPage(QWidget):
         self._line_edits[key] = edit
         return edit
 
+    def _add_spin(self, form: QFormLayout, label: str, key: str, maximum: int = 99999) -> QSpinBox:
+        spin = _NoWheelSpinBox()
+        spin.setRange(0, maximum)
+        spin.valueChanged.connect(self._mark_dirty)
+        form.addRow(label, spin)
+        self._spin_boxes[key] = spin
+        return spin
+
+    def _add_time(self, form: QFormLayout, label: str, key: str, default: str) -> _TimePicker:
+        picker = _TimePicker(default)
+        picker.changed.connect(self._mark_dirty)
+        form.addRow(label, picker)
+        self._time_pickers[key] = picker
+        return picker
+
+    @staticmethod
+    def _path_row(edit: QLineEdit, button: QPushButton) -> QWidget:
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(edit, 1)
+        layout.addWidget(button)
+        return row
+
+    def _browse_executable(self, target: QLineEdit, title: str) -> None:
+        selected, _filter = QFileDialog.getOpenFileName(
+            self,
+            title,
+            target.text(),
+            "Windows 程序 (*.exe)",
+        )
+        if selected:
+            target.setText(selected)
+            self._mark_dirty()
+
+    def _add_news_time(self, value: str = "00:00") -> None:
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        picker = _TimePicker(value)
+        picker.changed.connect(self._mark_dirty)
+        remove = QPushButton("删除")
+        remove.clicked.connect(lambda _checked=False, host=row: self._remove_news_time(host))
+        layout.addWidget(picker, 1)
+        layout.addWidget(remove)
+        self.news_times_layout.addWidget(row)
+        self._news_time_rows.append((row, picker))
+        self._mark_dirty()
+
+    def _remove_news_time(self, row: QWidget) -> None:
+        self._news_time_rows = [(host, picker) for host, picker in self._news_time_rows if host is not row]
+        self.news_times_layout.removeWidget(row)
+        row.deleteLater()
+        self._mark_dirty()
+
+    def _set_news_times(self, values) -> None:
+        for row, _picker in self._news_time_rows:
+            self.news_times_layout.removeWidget(row)
+            row.deleteLater()
+        self._news_time_rows.clear()
+        for value in values or ("00:05", "12:05"):
+            self._add_news_time(str(value))
+
     def _add_toggle(self, layout: QVBoxLayout, label: str, key: str, note: str = "") -> ToggleSwitch:
         row = QWidget()
         row_layout = QHBoxLayout(row)
@@ -298,14 +416,14 @@ class SettingsPage(QWidget):
             executable.textEdited.connect(self._mark_dirty)
             browse = QPushButton("浏览…")
             browse.clicked.connect(lambda _checked=False, target=directory: self._browse_directory(target))
-            directory_row = QWidget()
-            directory_layout = QHBoxLayout(directory_row)
-            directory_layout.setContentsMargins(0, 0, 0, 0)
-            directory_layout.addWidget(directory, 1)
-            directory_layout.addWidget(browse)
-            form.addRow("MAA 所在文件夹", directory_row)
+            form.addRow("MAA 所在文件夹", self._path_row(directory, browse))
             form.addRow("备注名（可选）", alias)
-            form.addRow("启动文件（通常不用改）", executable)
+            executable_browse = QPushButton("浏览…")
+            executable_browse.clicked.connect(
+                lambda _checked=False, target=executable, name=label:
+                    self._browse_executable(target, f"选择 {name} 启动文件")
+            )
+            form.addRow("启动文件（通常不用改）", self._path_row(executable, executable_browse))
             card_layout.addLayout(form)
             self._add_toggle(card_layout, "启动 Agent 时一起打开", f"autostart:{label}")
             instances_layout.addWidget(card)
@@ -314,7 +432,9 @@ class SettingsPage(QWidget):
         mumu_form = QFormLayout()
         self.mumu_path = QLineEdit()
         self.mumu_path.textEdited.connect(self._mark_dirty)
-        mumu_form.addRow("MuMu 启动文件", self.mumu_path)
+        mumu_browse = QPushButton("浏览…")
+        mumu_browse.clicked.connect(lambda _checked=False: self._browse_executable(self.mumu_path, "选择 MuMu 启动文件"))
+        mumu_form.addRow("MuMu 启动文件", self._path_row(self.mumu_path, mumu_browse))
         instances_layout.addLayout(mumu_form)
         self._add_toggle(instances_layout, "启动 Agent 时一起打开 MuMu", "autostart:MuMu")
         layout.addWidget(instances)
@@ -334,15 +454,23 @@ class SettingsPage(QWidget):
             ("可用内存低于（MB）", "memory_critical_available_mb"),
             ("情况没变化时每隔多久记录（分钟）", "resource_sample_abnormal_steady_minutes"),
         ):
-            self._add_line(form, label, key)
+            maximum = 100 if key.endswith("_percent") else 99999
+            self._add_spin(form, label, key, maximum)
         memory_layout.addLayout(form)
         layout.addWidget(memory)
         proxy, proxy_layout = self._card("网络与公告")
         self._add_toggle(proxy_layout, "网络异常时提醒我", "enable_proxy_healthcheck", "定时确认代理和外网能否正常使用。")
         self._add_toggle(proxy_layout, "有新的维护公告时提醒我", "enable_news_monitor")
-        form = QFormLayout()
-        self._add_line(form, "每天检查时间（用逗号分隔）", "news_check_times")
-        proxy_layout.addLayout(form)
+        times_header = QHBoxLayout()
+        times_header.addWidget(QLabel("每天检查时间"))
+        times_header.addStretch(1)
+        add_time = QPushButton("＋ 添加时间")
+        add_time.clicked.connect(lambda: self._add_news_time("00:00"))
+        times_header.addWidget(add_time)
+        proxy_layout.addLayout(times_header)
+        self.news_times_layout = QVBoxLayout()
+        self.news_times_layout.setSpacing(7)
+        proxy_layout.addLayout(self.news_times_layout)
         layout.addWidget(proxy)
         layout.addStretch(1)
         return page
@@ -379,13 +507,14 @@ class SettingsPage(QWidget):
         self._add_toggle(proxy_layout, "网络异常时提醒我", "enable_proxy_healthcheck")
         self._add_toggle(proxy_layout, "启用每日报告", "enable_daily_report")
         form = QFormLayout()
-        self._add_line(form, "日报时间（HH:MM）", "daily_report_time")
+        self._add_time(form, "日报时间", "daily_report_time", "23:50")
+        self._add_time(form, "日程每天从", "schedule_day_start_time", "04:00")
         proxy_layout.addLayout(form)
         layout.addWidget(proxy)
         timing, timing_layout = self._card("检查频率")
         form = QFormLayout()
         for label, key, _kind in TIMING_FIELDS:
-            self._add_line(form, label, key)
+            self._add_spin(form, label, key)
         timing_layout.addLayout(form)
         layout.addWidget(timing)
         layout.addStretch(1)
@@ -396,9 +525,13 @@ class SettingsPage(QWidget):
         preview, preview_layout = self._card("查看通知样例")
         buttons = QGridLayout()
         buttons.setSpacing(8)
+        self.preview_group = QButtonGroup(self)
+        self.preview_group.setExclusive(True)
         for index, label in enumerate(LOCAL_PREVIEWS):
             button = QPushButton(label)
+            button.setCheckable(True)
             button.clicked.connect(lambda _checked=False, name=label: self._show_preview(name))
+            self.preview_group.addButton(button)
             self.preview_buttons[label] = button
             buttons.addWidget(button, index // 4, index % 4)
         preview_layout.addLayout(buttons)
@@ -409,10 +542,10 @@ class SettingsPage(QWidget):
         preview_layout.addWidget(self.preview_text)
         layout.addWidget(preview)
         real, real_layout = self._card("发送测试")
-        warning = QLabel("需要确认手机能否收到时，可以发送一条 Bark 测试通知。")
+        warning = QLabel("可以发送以上 Bark 测试通知到手机进行测试。")
         warning.setWordWrap(True)
         real_layout.addWidget(warning)
-        real_button = QPushButton("发送一条测试通知…")
+        real_button = QPushButton("发送以上测试通知")
         real_button.clicked.connect(self._enqueue_real_test)
         real_layout.addWidget(real_button, 0, Qt.AlignmentFlag.AlignLeft)
         self.diagnostic_status = QLabel("测试结果：还没有发送。")
@@ -460,6 +593,12 @@ class SettingsPage(QWidget):
         self.instance_cards["MAA2"].setVisible(index == 1)
         if "MAA2 未运行" in self.preview_buttons:
             self.preview_buttons["MAA2 未运行"].setVisible(index == 1)
+        if index == 0 and self._selected_preview == "MAA2 未运行":
+            self._selected_preview = ""
+            self.preview_group.setExclusive(False)
+            self.preview_buttons["MAA2 未运行"].setChecked(False)
+            self.preview_group.setExclusive(True)
+            self.preview_text.clear()
         if not self._loading:
             self._mark_dirty()
 
@@ -480,6 +619,12 @@ class SettingsPage(QWidget):
                 elif self._timing_kinds.get(key) == "int" and value not in (None, ""):
                     value = int(float(value))
                 edit.setText(str(value) if value is not None else "")
+            for key, spin in self._spin_boxes.items():
+                value = data.get(key, FIELD_DEFAULTS.get(key, 0))
+                spin.setValue(int(float(value or 0)))
+            for key, picker in self._time_pickers.items():
+                picker.set_time(str(data.get(key, FIELD_DEFAULTS.get(key, "00:00"))))
+            self._set_news_times(data.get("news_check_times") or FIELD_DEFAULTS["news_check_times"])
             for key, toggles in self._toggles.items():
                 if key.startswith("autostart:"):
                     value = bool((data.get("auto_start_apps_with_agent") or {}).get(key.split(":", 1)[1], False))
@@ -506,12 +651,10 @@ class SettingsPage(QWidget):
         data = deepcopy(self._snapshot)
         int_fields = {"bark_retry_attempts", "ai_max_calls_per_day", "resource_sample_abnormal_steady_minutes"}
         float_fields = {
-            "memory_pressure_percent", "memory_critical_percent", "memory_critical_available_mb",
-            "memory_pressure_sustain_minutes", "memory_critical_sustain_minutes", "bark_retry_sleep_seconds",
+            "bark_retry_sleep_seconds",
             *(key for key, kind in self._timing_kinds.items() if kind == "float"),
         }
         int_fields.update(key for key, kind in self._timing_kinds.items() if kind == "int")
-        list_fields = {"news_check_times"}
         for key, edit in self._line_edits.items():
             text = edit.text().strip()
             if key in int_fields:
@@ -520,10 +663,13 @@ class SettingsPage(QWidget):
             elif key in float_fields:
                 if text:
                     data[key] = float(text)
-            elif key in list_fields:
-                data[key] = [item.strip() for item in text.replace("，", ",").split(",") if item.strip()]
             else:
                 data[key] = text
+        for key, spin in self._spin_boxes.items():
+            data[key] = int(spin.value())
+        for key, picker in self._time_pickers.items():
+            data[key] = picker.time()
+        data["news_check_times"] = [picker.time() for _row, picker in self._news_time_rows]
         for key, toggles in self._toggles.items():
             if key.startswith("autostart:"):
                 continue
@@ -554,6 +700,9 @@ class SettingsPage(QWidget):
             for label, path in directories.items()
         })
         launch_paths["MuMu"] = self.mumu_path.text().strip()
+        for label, path in launch_paths.items():
+            if path and Path(path).suffix.lower() != ".exe":
+                raise ValueError(f"{label} 的启动文件需要选择 .exe 文件。")
         data["launch_paths"] = launch_paths
         autostart = {key: value for key, value in (data.get("auto_start_apps_with_agent") or {}).items() if not str(key).upper().startswith("MAA")}
         for label in (*labels, "MuMu"):
@@ -561,9 +710,11 @@ class SettingsPage(QWidget):
         data["auto_start_apps_with_agent"] = autostart
         news_times = data.get("news_check_times") or []
         if not news_times or any(not TIME_RE.fullmatch(str(value)) for value in news_times):
-            raise ValueError("官网检查时间请使用 HH:MM，并用逗号分隔。")
+            raise ValueError("请至少保留一个有效的官网检查时间。")
         if not TIME_RE.fullmatch(str(data.get("daily_report_time", ""))):
-            raise ValueError("日报时间必须是 HH:MM，例如 23:50。")
+            raise ValueError("请选择有效的日报时间。")
+        if not TIME_RE.fullmatch(str(data.get("schedule_day_start_time", ""))):
+            raise ValueError("请选择有效的日程开始时间。")
         retry_attempts = int(data.get("bark_retry_attempts", 0))
         retry_sleep = float(data.get("bark_retry_sleep_seconds", -1))
         if retry_attempts < 1 or retry_sleep < 0:
@@ -632,22 +783,40 @@ class SettingsPage(QWidget):
         QMessageBox.warning(self, "没有保存成功", message)
 
     def _show_preview(self, name: str) -> None:
+        self._selected_preview = name
         self.preview_text.setPlainText(f"【本地预览】{name}\n\n{LOCAL_PREVIEWS[name]}")
 
     def _enqueue_real_test(self) -> None:
+        selected = self._selected_preview
+        description = selected or "Bark 通知"
         answer = QMessageBox.question(
             self,
             "发送测试通知？",
-            "现在向手机发送一条测试通知？",
+            f"现在向手机发送“{description}”测试通知？",
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
         try:
-            command_id = diagnostic_commands.enqueue(self.base_dir, "bark_transport")
+            kind, target = DIAGNOSTIC_CASES.get(selected, ("bark_transport", ""))
+            self._pending_diagnostic_id = diagnostic_commands.enqueue(self.base_dir, kind, target)
         except OSError as exc:
             self.diagnostic_status.setText(f"无法提交测试：{exc}")
             return
-        self.diagnostic_status.setText("已交给 Agent 发送，请留意手机通知。")
+        self.diagnostic_status.setText(f"已提交“{description}”测试，请留意手机通知。")
+        self._diagnostic_timer.start()
+
+    def _poll_diagnostic_result(self) -> None:
+        path = diagnostic_commands.result_path(self.base_dir)
+        try:
+            result = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        if str(result.get("id") or "") != self._pending_diagnostic_id:
+            return
+        self._diagnostic_timer.stop()
+        self._pending_diagnostic_id = ""
+        prefix = "测试通过" if result.get("ok") else "测试没有完成"
+        self.diagnostic_status.setText(f"{prefix}：{result.get('message') or '没有返回说明。'}")
 
     def set_theme(self, theme: str) -> None:
         self.theme = theme

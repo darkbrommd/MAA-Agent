@@ -8,13 +8,13 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Qt, Signal, QSize
 from PySide6.QtWidgets import (
-    QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QPlainTextEdit,
+    QMenu,
     QPushButton,
     QSplitter,
     QSizePolicy,
@@ -192,11 +192,13 @@ class DashboardPage(QWidget):
         tools = QHBoxLayout()
         tools.addWidget(QLabel("最近事件与内存趋势"))
         tools.addStretch(1)
-        self.log_mode = QComboBox()
-        self.log_mode.addItems(("事故与恢复", "全部"))
-        self.log_mode.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
-        self.log_mode.setCurrentText(str(self.page_state.get("log_mode") or "事故与恢复"))
-        self.log_mode.currentTextChanged.connect(self._change_log_mode)
+        self.log_mode = QPushButton(str(self.page_state.get("log_mode") or "事故与恢复"))
+        self.log_mode.setObjectName("MenuButton")
+        self.log_mode.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        mode_menu = QMenu(self.log_mode)
+        for mode in ("事故与恢复", "全部"):
+            mode_menu.addAction(mode, lambda checked=False, value=mode: self._change_log_mode(value))
+        self.log_mode.setMenu(mode_menu)
         tools.addWidget(self.log_mode)
         self.chart_toggle = QPushButton("折叠趋势")
         self.chart_toggle.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -215,7 +217,7 @@ class DashboardPage(QWidget):
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setMaximumBlockCount(1200)
-        self.log_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.log_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         self.log_view.setPlaceholderText("（最近没有事故、异常或恢复记录）")
         self.activity_splitter.addWidget(self.chart)
         self.activity_splitter.addWidget(self.log_view)
@@ -407,7 +409,7 @@ class DashboardPage(QWidget):
         bar.setValue(bar.maximum())
 
     def _line_visible(self, line: str) -> bool:
-        if not line_matches(line, self.log_mode.currentText()):
+        if not line_matches(line, self.log_mode.text()):
             return False
         cutoff = str(self.page_state.get("log_cutoff") or "")
         if not cutoff:
@@ -427,6 +429,7 @@ class DashboardPage(QWidget):
         self.log_view.verticalScrollBar().setValue(self.log_view.verticalScrollBar().maximum())
 
     def _change_log_mode(self, mode: str) -> None:
+        self.log_mode.setText(mode)
         self.page_state["log_mode"] = mode
         self._render_logs()
 

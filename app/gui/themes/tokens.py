@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from gui.resource_paths import resource_path
+
 
 @dataclass(frozen=True)
 class ThemeTokens:
@@ -29,7 +31,9 @@ class ThemeTokens:
     disabled_background: str
 
     def mapping(self) -> dict[str, str]:
-        return asdict(self)
+        values = asdict(self)
+        values["combo_arrow"] = resource_path("assets", "icons", "chevron-down.svg").as_posix()
+        return values
 
 
 DARK = ThemeTokens(

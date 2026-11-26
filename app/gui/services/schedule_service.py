@@ -24,6 +24,27 @@ def occurrence_key(label: str, when: datetime) -> str:
     return f"{label}|{when:%Y-%m-%d %H:%M}"
 
 
+def schedule_day_bounds(selected_day: date, cfg: dict) -> tuple[datetime, datetime]:
+    value = str(cfg.get("schedule_day_start_time") or "04:00")
+    try:
+        hour_text, minute_text = value.split(":", 1)
+        hour, minute = int(hour_text), int(minute_text)
+        if not 0 <= hour <= 24 or not 0 <= minute <= 59:
+            raise ValueError
+    except (TypeError, ValueError):
+        hour, minute = 4, 0
+    if hour == 24:
+        hour = 0
+    start = datetime.combine(selected_day, datetime.min.time()).replace(hour=hour, minute=minute)
+    return start, start + timedelta(days=1) - timedelta(microseconds=1)
+
+
+def schedule_current_day(now: datetime, cfg: dict) -> date:
+    today = now.date()
+    start, _end = schedule_day_bounds(today, cfg)
+    return today - timedelta(days=1) if now < start else today
+
+
 def _read_mapping(path: Path) -> dict:
     try:
         value = json.loads(path.read_text(encoding="utf-8-sig"))
@@ -127,18 +148,36 @@ class _ScheduleSignals(QObject):
 
 
 class _ScheduleWorker(QRunnable):
-    def __init__(self, request_id: int, base_dir: Path, start: datetime, end: datetime):
+    def __init__(
+        self,
+        request_id: int,
+        base_dir: Path,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        selected_day: date | None = None,
+        use_current_day: bool = False,
+    ):
         super().__init__()
         self.request_id = request_id
         self.base_dir = base_dir
         self.start = start
         self.end = end
+        self.selected_day = selected_day
+        self.use_current_day = use_current_day
         self.signals = _ScheduleSignals()
 
     def run(self) -> None:
         try:
             cfg = _read_mapping(config_path(self.base_dir))
-            rows, meta = effective_occurrences(self.base_dir, cfg, self.start, self.end, include_skipped=True)
+            start, end = self.start, self.end
+            selected_day = self.selected_day
+            if self.use_current_day:
+                selected_day = schedule_current_day(datetime.now(), cfg)
+            if selected_day is not None:
+                start, end = schedule_day_bounds(selected_day, cfg)
+            if start is None or end is None:
+                raise ValueError("日程日期范围无效。")
+            rows, meta = effective_occurrences(self.base_dir, cfg, start, end, include_skipped=True)
             state_dir = self.base_dir / "state"
             run_records = schedule_run_records(_read_mapping(state_dir / "schedule_run_status.json"))
             daily_states = {day: _read_mapping(state_dir / f"daily_{day.isoformat()}.json") for day in {row["datetime"].date() for row in rows}}
@@ -160,7 +199,10 @@ class _ScheduleWorker(QRunnable):
             for row in decorated:
                 label = str(row.get("label") or "")
                 row["display_label"] = f"{aliases[label]}（{label}）" if aliases.get(label) else label
-            self.signals.done.emit(self.request_id, ScheduleSnapshot(self.start, self.end, decorated, dict(meta)))
+            metadata = dict(meta)
+            if selected_day is not None:
+                metadata["selected_day"] = selected_day.isoformat()
+            self.signals.done.emit(self.request_id, ScheduleSnapshot(start, end, decorated, metadata))
         except Exception as exc:
             self.signals.failed.emit(self.request_id, str(exc))
 
@@ -183,6 +225,24 @@ class ScheduleService(QObject):
         self._request_id += 1
         request_id = self._request_id
         worker = _ScheduleWorker(request_id, self.base_dir, start, end)
+        worker.signals.done.connect(self._deliver)
+        worker.signals.failed.connect(self._deliver_failure)
+        self.thread_pool.start(worker)
+        return request_id
+
+    def request_day(self, selected_day: date) -> int:
+        self._request_id += 1
+        request_id = self._request_id
+        worker = _ScheduleWorker(request_id, self.base_dir, selected_day=selected_day)
+        worker.signals.done.connect(self._deliver)
+        worker.signals.failed.connect(self._deliver_failure)
+        self.thread_pool.start(worker)
+        return request_id
+
+    def request_current_day(self) -> int:
+        self._request_id += 1
+        request_id = self._request_id
+        worker = _ScheduleWorker(request_id, self.base_dir, use_current_day=True)
         worker.signals.done.connect(self._deliver)
         worker.signals.failed.connect(self._deliver_failure)
         self.thread_pool.start(worker)

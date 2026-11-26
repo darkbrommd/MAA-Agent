@@ -23,7 +23,7 @@ if str(APP_DIR) not in sys.path:
 
 from PySide6.QtCore import QCoreApplication, QEventLoop, QObject, QPoint, QPointF, QRect, QThreadPool, Qt, Signal
 from PySide6.QtGui import QImage, QPainter, QWheelEvent
-from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QPushButton
+from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton
 
 from gui.components.resource_chart import ResourceChart
 from gui.components.date_picker import DatePicker
@@ -35,7 +35,7 @@ from gui.main_window import MainWindow
 from gui.first_run_wizard import FirstRunWizard, needs_first_run
 from gui.models.news_model import NewsModel
 from gui.pages.dashboard import DashboardPage
-from gui.pages.news import NewsPage, format_news_body_html
+from gui.pages.news import NewsPage, format_news_body_html, format_update_time
 from gui.pages.logs import LogsPage
 from gui.models.schedule_model import ScheduleModel, schedule_row_key
 from gui.pages.resources import _WhitelistSaveWorker
@@ -47,7 +47,14 @@ from gui.services import agent_control_service
 from gui.services.log_service import line_matches, read_log_chunk
 from gui.services.news_service import NewsSnapshot
 from gui.services.process_service import _build_snapshot
-from gui.services.schedule_service import decorate_schedule_rows, occurrence_key, schedule_run_records
+from gui.services.schedule_service import (
+    decorate_schedule_rows,
+    occurrence_key,
+    schedule_current_day,
+    schedule_day_bounds,
+    schedule_run_records,
+)
+from gui.pages.settings.page import DIAGNOSTIC_CASES
 from gui.state.refresh_manager import RefreshManager
 from gui.state.app_state import AppState
 from gui.themes.tokens import DARK, LIGHT, load_stylesheet
@@ -215,7 +222,7 @@ class GuiV2Tests(unittest.TestCase):
                 "maa_instance_aliases": {"MAA1": "主账号"},
                 "maa_gui_config_paths": {"MAA1": "D:/custom/gui.json"},
                 "maa_log_paths": ["D:/custom/asst.log"],
-                "launch_paths": {"MAA1": "D:/custom/start-maa.cmd", "MuMu": "D:/MuMu.exe"},
+                "launch_paths": {"MAA1": "D:/custom/MAA.exe", "MuMu": "D:/MuMu.exe"},
                 "auto_start_apps_with_agent": {"MAA1": False, "MuMu": False},
                 "enable_proxy_healthcheck": True,
                 "startup_process_grace_minutes": 10.0,
@@ -238,7 +245,10 @@ class GuiV2Tests(unittest.TestCase):
             proxy_toggles[0].toggled.emit(False)
             self.assertTrue(all(not toggle.isChecked() for toggle in proxy_toggles))
             self.assertEqual(page._line_edits["bark_key"].echoMode(), QLineEdit.EchoMode.Password)
-            self.assertEqual(page._line_edits["startup_process_grace_minutes"].text(), "10")
+            self.assertEqual(page._spin_boxes["startup_process_grace_minutes"].value(), 10)
+            self.assertEqual(page._time_pickers["daily_report_time"].time(), "23:50")
+            self.assertEqual(page._time_pickers["schedule_day_start_time"].time(), "04:00")
+            self.assertEqual([picker.time() for _row, picker in page._news_time_rows], ["00:05", "12:05"])
             self.assertEqual(
                 next(label.text() for label in page.findChildren(QLabel) if "右下角保存" in label.text()),
                 "改好后点击右下角保存就可以。",
@@ -250,13 +260,28 @@ class GuiV2Tests(unittest.TestCase):
             )
             for forbidden in ("config.json", "全部配置", "代理健康检查", "监督预期", "下一轮读取", "MAA 实例"):
                 self.assertNotIn(forbidden, visible_copy)
+            page._time_pickers["schedule_day_start_time"].hour.setCurrentIndex(24)
+            page._time_pickers["schedule_day_start_time"].minute.setCurrentIndex(15)
+            first_news_row = page._news_time_rows[0][0]
+            page._remove_news_time(first_news_row)
+            page._add_news_time("06:30")
             collected = page._collect()
-            self.assertEqual(collected["launch_paths"]["MAA1"], "D:/custom/start-maa.cmd")
+            self.assertEqual(collected["launch_paths"]["MAA1"], "D:/custom/MAA.exe")
+            self.assertEqual(collected["schedule_day_start_time"], "00:15")
+            self.assertEqual(collected["news_check_times"], ["12:05", "06:30"])
+            self.assertIsInstance(collected["startup_process_grace_minutes"], int)
             self.assertEqual(collected["maa_gui_config_paths"]["MAA1"], "D:/custom/gui.json")
             self.assertEqual(collected["maa_log_paths"], ["D:/custom/asst.log"])
             page.instance_count.setCurrentIndex(1)
             self.assertFalse(page.instance_cards["MAA2"].isHidden())
             self.assertFalse(page.preview_buttons["MAA2 未运行"].isHidden())
+            page._show_preview("内存不足")
+            self.assertEqual(DIAGNOSTIC_CASES[page._selected_preview], ("memory", ""))
+            with patch("gui.pages.settings.page.QMessageBox.question", return_value=QMessageBox.StandardButton.Yes), \
+                    patch("gui.pages.settings.page.diagnostic_commands.enqueue", return_value="test-id") as enqueue:
+                page._enqueue_real_test()
+            enqueue.assert_called_once_with(base_dir, "memory", "")
+            page._diagnostic_timer.stop()
             window._allow_close = True
             window.process_timer.stop()
             window.process_service.wait()
@@ -406,7 +431,17 @@ class GuiV2Tests(unittest.TestCase):
         duplicate_b = {**row(3), "timer_id": 2, "config": "B"}
         self.assertNotEqual(schedule_row_key(duplicate_a), schedule_row_key(duplicate_b))
 
-    def test_schedule_page_keeps_scroll_anchor_when_window_grows(self):
+    def test_schedule_day_bounds_accept_four_and_normalize_twenty_four(self):
+        selected = date(2026, 11, 27)
+        start, end = schedule_day_bounds(selected, {"schedule_day_start_time": "04:30"})
+        self.assertEqual(start, datetime(2026, 11, 27, 4, 30))
+        self.assertEqual(end, datetime(2026, 11, 28, 4, 29, 59, 999999))
+        midnight, _end = schedule_day_bounds(selected, {"schedule_day_start_time": "24:00"})
+        self.assertEqual(midnight, datetime(2026, 11, 27, 0, 0))
+        self.assertEqual(schedule_current_day(datetime(2026, 11, 27, 3, 59), {}), date(2026, 11, 26))
+        self.assertEqual(schedule_current_day(datetime(2026, 11, 27, 4, 0), {}), date(2026, 11, 27))
+
+    def test_schedule_page_switches_exactly_one_day(self):
         with tempfile.TemporaryDirectory() as temporary:
             base_dir = Path(temporary)
             (base_dir / "config").mkdir(parents=True)
@@ -417,90 +452,13 @@ class GuiV2Tests(unittest.TestCase):
             page = SchedulePage(base_dir, {})
             QThreadPool.globalInstance().waitForDone(3000)
             process_events(80)
-            base = datetime(2026, 11, 24)
-
-            def row(offset: int) -> dict:
-                when = base + timedelta(hours=offset)
-                return {
-                    "label": "MAA1",
-                    "datetime": when,
-                    "original_datetime": when,
-                    "config": "任务",
-                    "state": "future",
-                    "status_title": "等待运行",
-                    "status_detail": "已加入后续监测",
-                    "skipped": False,
-                    "override": None,
-                }
-
-            original = tuple(row(offset) for offset in range(16))
-            page.model.set_rows(original)
-            page.resize(900, 420)
-            page.show()
-            process_events(120)
-            bar = page.list_view.verticalScrollBar()
-            bar.setValue(bar.maximum())
-            process_events(40)
-            page._capture_view_anchor()
-            old_value = page._preserve_scroll_value
-            update_kind = page.model.sync_rows(original + tuple(row(offset) for offset in range(16, 20)))
-            process_events(40)
-            page._restore_after_update(update_kind, "extend_down")
-            self.assertEqual(update_kind, "append")
-            self.assertEqual(bar.value(), old_value)
-
-            bar.setValue(max(bar.minimum(), bar.value() // 2))
-            process_events(40)
-            page._capture_view_anchor()
-            anchor = page._preserve_key
-            prepended = tuple(row(offset) for offset in range(-4, 0)) + page.model.rows()
-            update_kind = page.model.sync_rows(prepended)
-            process_events(40)
-            page._restore_after_update(update_kind, "extend_up")
-            process_events(40)
-            top_index = page.list_view.indexAt(QPoint(12, 12))
-            self.assertEqual(update_kind, "prepend")
-            self.assertTrue(top_index.isValid())
-            self.assertEqual(schedule_row_key(page.model.item(top_index.row())), anchor)
-            self.assertEqual(page._override_pool.maxThreadCount(), 1)
-            page.close()
-
-    def test_wheel_at_existing_bottom_requests_only_one_new_day(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            base_dir = Path(temporary)
-            (base_dir / "config").mkdir(parents=True)
-            (base_dir / "state").mkdir()
-            (base_dir / "config" / "config.json").write_text(
-                json.dumps({"maa_schedule": {}, "maa_instance_dirs": {}}), encoding="utf-8"
-            )
-            page = SchedulePage(base_dir, {})
-            QThreadPool.globalInstance().waitForDone(3000)
-            process_events(80)
-            page._loading = False
-            old_end = page.window_end
-            event = QWheelEvent(
-                QPointF(20, 20),
-                QPointF(20, 20),
-                QPoint(),
-                QPoint(0, -120),
-                Qt.MouseButton.NoButton,
-                Qt.KeyboardModifier.NoModifier,
-                Qt.ScrollPhase.NoScrollPhase,
-                False,
-            )
-            QApplication.sendEvent(page.list_view.viewport(), event)
-            self.assertEqual(page.window_end, old_end + timedelta(days=1))
-            self.assertTrue(page._edge_lock)
-            extension = page._request_contexts[page._active_request_id]
-            self.assertEqual(extension["mode"], "extend_down")
-            self.assertEqual(extension["request_start"], page.window_end)
-            self.assertEqual(extension["request_end"], page.window_end)
-            selected = page.selected_day + timedelta(days=1)
+            original = page.selected_day
+            selected = original + timedelta(days=1)
             page.set_day(selected)
             context = page._request_contexts[page._active_request_id]
             self.assertEqual(context["mode"], "reset")
-            self.assertEqual(context["request_start"], page.window_start)
-            self.assertEqual(context["request_end"], page.window_end)
+            self.assertEqual(context["selected_day"], selected)
+            self.assertEqual(page.selected_day - original, timedelta(days=1))
             QThreadPool.globalInstance().waitForDone(3000)
             process_events(80)
             page.close()
@@ -575,7 +533,6 @@ class GuiV2Tests(unittest.TestCase):
             bar = page.list_view.verticalScrollBar()
             bar.setValue(bar.maximum())
             page._loading = False
-            page._edge_lock = True
             before = bar.value()
             for _ in range(3):
                 event = QWheelEvent(
@@ -903,6 +860,7 @@ class GuiV2Tests(unittest.TestCase):
         self.assertIn("<ul>", rendered)
         self.assertIn("<li>第一项</li>", rendered)
         self.assertIn("<h3>补偿范围</h3>", rendered)
+        self.assertEqual(format_update_time("2026-11-27T00:05:17"), "2026年11月27日 00:05")
 
     def test_dashboard_signature_changes_only_when_sources_change(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -994,6 +952,9 @@ class GuiV2Tests(unittest.TestCase):
             window.show_page("dashboard")
             self.assertFalse(window.status_bar.isHidden())
             dashboard = window._pages["dashboard"]
+            self.assertEqual(dashboard.log_view.lineWrapMode(), QPlainTextEdit.LineWrapMode.WidgetWidth)
+            self.assertIsNotNone(dashboard.log_mode.menu())
+            self.assertEqual(dashboard.log_mode.objectName(), "MenuButton")
             self.assertGreaterEqual(len(dashboard.findChildren(QLabel, "StatusPill")), 2)
             window.show_page("news")
             self.assertTrue(window.status_bar.isHidden())

@@ -14,6 +14,11 @@ QPushButton:pressed, QToolButton:pressed {{ background: {disabled_background}; }
 QPushButton:checked, QToolButton:checked {{ background: {disabled_background}; border-color: {accent}; }}
 QPushButton:disabled, QToolButton:disabled {{ color: {disabled_text}; background: {disabled_background}; }}
 QPushButton#PrimaryButton {{ background: {accent}; color: white; border-color: {accent}; }}
+QPushButton#MenuButton {{ padding-right: 30px; }}
+QPushButton#MenuButton::menu-indicator {{ image: url("{combo_arrow}"); subcontrol-position: right center; subcontrol-origin: padding; right: 8px; width: 12px; height: 12px; }}
+QMenu {{ background: {card}; color: {text}; border: 1px solid {border}; padding: 5px; }}
+QMenu::item {{ padding: 7px 24px 7px 10px; border-radius: 5px; }}
+QMenu::item:selected {{ background: {disabled_background}; color: {accent}; }}
 QPushButton#NavButton {{ text-align: left; padding: 9px 12px; border-color: transparent; background: transparent; font-size: 15px; }}
 QPushButton#NavButton:checked {{ background: {card}; color: {accent}; border-color: {border}; }}
 QPushButton#NavButton[compact="true"] {{ text-align: center; padding: 9px 0; }}
@@ -28,6 +33,9 @@ QLabel#StatusPill[status="warning"] {{ background: {running_card}; color: {warni
 QLabel#StatusPill[status="stopped"] {{ background: {ended_card}; color: {ended}; border-color: {border}; }}
 QLabel#StatusPill[status="error"] {{ background: {failure_card}; color: {danger}; border-color: {danger}; }}
 QLineEdit, QComboBox, QSpinBox, QDateEdit {{ background: {card}; border: 1px solid {border}; border-radius: 7px; padding: 6px 8px; }}
+QComboBox {{ padding-right: 30px; }}
+QComboBox::drop-down {{ border: 0; width: 26px; }}
+QComboBox::down-arrow {{ image: url("{combo_arrow}"); width: 12px; height: 12px; }}
 QFrame#MetricCard {{ min-height: 88px; }}
 QProgressBar#MetricProgress {{ background: {disabled_background}; color: {text}; border: 1px solid {border}; border-radius: 6px; text-align: center; font-family: "Segoe UI"; font-weight: 700; }}
 QProgressBar#MetricProgress::chunk {{ background: {accent}; border-radius: 5px; }}

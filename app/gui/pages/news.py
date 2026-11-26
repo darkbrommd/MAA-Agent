@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from html import escape
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QTimer, Qt
@@ -55,6 +56,17 @@ def format_news_body_html(text: str) -> str:
             parts.append(f"<p>{escape(line)}</p>")
     flush_bullets()
     return "".join(parts)
+
+
+def format_update_time(value: str) -> str:
+    text = str(value or "").strip()
+    if not text or text == "尚未更新":
+        return "尚未更新"
+    try:
+        moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return text.replace("T", " ")
+    return moment.astimezone().strftime("%Y年%m月%d日 %H:%M") if moment.tzinfo else moment.strftime("%Y年%m月%d日 %H:%M")
 
 
 class NewsPage(QWidget):
@@ -166,7 +178,7 @@ class NewsPage(QWidget):
         self.list.verticalScrollBar().setValue(list_scroll)
         self.detail.verticalScrollBar().setValue(detail_scroll)
         if self._requested_mode == "local":
-            self.status.setText(f"已保存 {snapshot.total} 条 · 更新于 {snapshot.updated_at}")
+            self.status.setText(f"已保存 {snapshot.total} 条 · 更新于 {format_update_time(snapshot.updated_at)}")
         else:
             verb = "重新获取" if self._requested_mode == "full" else "更新"
             self.status.setText(f"{verb}完成 · 新增 {snapshot.new_count} 条 · 共 {snapshot.total} 条")
