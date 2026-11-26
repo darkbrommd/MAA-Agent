@@ -380,6 +380,27 @@ class UtilityTests(unittest.TestCase):
         self.assertIn("已用", text)
         self.assertIn("可用", text)
 
+    def test_stable_abnormal_resource_samples_are_spaced_out(self):
+        cfg = {
+            "resource_sample_abnormal_minutes": 1,
+            "resource_sample_abnormal_steady_minutes": 5,
+            "resource_sample_normal_minutes": 5,
+        }
+        last = {
+            "ram": 93.0,
+            "cpu": 35.0,
+            "maa_count": 2,
+            "mumu_count": 8,
+            "abnormal": True,
+            "sample_state": {"memory": True, "cpu": False, "missing_maa": False},
+        }
+        stable = {**last, "ram": 93.8, "cpu": 39.0}
+        changed = {**last, "ram": 96.2}
+        recovered = {**last, "ram": 70.0, "abnormal": False, "sample_state": {"memory": False, "cpu": False, "missing_maa": False}}
+        self.assertEqual(resource_history.adaptive_sample_interval(last, stable, cfg), 5)
+        self.assertEqual(resource_history.adaptive_sample_interval(last, changed, cfg), 1)
+        self.assertEqual(resource_history.adaptive_sample_interval(last, recovered, cfg), 0)
+
     def test_mumu_nx_is_grouped_as_mumu(self):
         category, name = resource_history._category("MuMuNxMain.exe", [], {"maa.exe"}, {"mumuplayer.exe"}, set())
         self.assertEqual((category, name), ("mumu", "MuMu"))

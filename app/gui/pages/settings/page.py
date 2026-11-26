@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -53,9 +54,15 @@ TIMING_FIELDS = (
 )
 
 LOCAL_PREVIEWS = {
+    "MAA1 未运行": "发生了什么：没有找到 MAA1。\n你要做什么：确认程序是否已经打开。",
+    "MAA2 未运行": "发生了什么：没有找到 MAA2。\n你要做什么：确认第二个 MAA 是否已经打开。",
+    "Bark 通知": "这是一条手机通知链路测试。收到它说明 Bark 和手机通知可以正常使用。",
     "内存不足": "发生了什么：系统内存持续吃紧，当前 96%，可用 1.2 GB。\n你要做什么：如果不是主动运行重负载程序，请检查异常占用。",
+    "磁盘空间不足": "发生了什么：磁盘剩余空间已经很少。\n你要做什么：清理不再需要的文件。",
+    "网络检查失败": "发生了什么：连续多次无法完成网络检查。\n你要做什么：确认当前网络是否正常。",
     "任务未按时开始": "发生了什么：MAA1 16:00 的计划仍没有观察到实际启动。\n你要做什么：检查 MAA、MuMu 和定时任务状态。",
     "窗口未响应": "发生了什么：MAA/MuMu 窗口持续未响应。\n你要做什么：远程确认对应程序是否卡住。",
+    "Agent 出错": "发生了什么：MAA Agent 没有正常完成本轮检查。\n你要做什么：打开日志中心查看最近记录。",
     "官网维护": "这是通知样例：检测到新的停机维护公告。",
 }
 
@@ -70,6 +77,7 @@ FIELD_DEFAULTS = {
     "memory_critical_percent": 95,
     "memory_critical_sustain_minutes": 10,
     "memory_critical_available_mb": 1536,
+    "resource_sample_abnormal_steady_minutes": 5,
     "news_check_times": ["00:05", "12:05"],
     "daily_report_time": "23:50",
     "check_interval_seconds": 60,
@@ -130,6 +138,7 @@ class SettingsPage(QWidget):
         self._dirty = False
         self._line_edits: dict[str, QLineEdit] = {}
         self._toggles: dict[str, list[ToggleSwitch]] = {}
+        self.preview_buttons: dict[str, QPushButton] = {}
         self._timing_kinds = {key: kind for _label, key, kind in TIMING_FIELDS}
         self._build_ui()
         self.service.load()
@@ -323,6 +332,7 @@ class SettingsPage(QWidget):
             ("严重占用达到（%）", "memory_critical_percent"),
             ("严重状态持续（分钟）", "memory_critical_sustain_minutes"),
             ("可用内存低于（MB）", "memory_critical_available_mb"),
+            ("情况没变化时每隔多久记录（分钟）", "resource_sample_abnormal_steady_minutes"),
         ):
             self._add_line(form, label, key)
         memory_layout.addLayout(form)
@@ -384,11 +394,13 @@ class SettingsPage(QWidget):
     def _build_diagnostics(self) -> QWidget:
         page, layout = self._section("通知测试", "先看看通知样例；需要确认手机能否收到时，再发送一条测试通知。")
         preview, preview_layout = self._card("查看通知样例")
-        buttons = QHBoxLayout()
-        for label in LOCAL_PREVIEWS:
+        buttons = QGridLayout()
+        buttons.setSpacing(8)
+        for index, label in enumerate(LOCAL_PREVIEWS):
             button = QPushButton(label)
             button.clicked.connect(lambda _checked=False, name=label: self._show_preview(name))
-            buttons.addWidget(button)
+            self.preview_buttons[label] = button
+            buttons.addWidget(button, index // 4, index % 4)
         preview_layout.addLayout(buttons)
         self.preview_text = QPlainTextEdit()
         self.preview_text.setReadOnly(True)
@@ -396,14 +408,14 @@ class SettingsPage(QWidget):
         self.preview_text.setPlaceholderText("选择一个提醒样例查看排版。")
         preview_layout.addWidget(self.preview_text)
         layout.addWidget(preview)
-        real, real_layout = self._card("发送到手机")
-        warning = QLabel("会向你的手机发送一条测试通知。")
+        real, real_layout = self._card("发送测试")
+        warning = QLabel("需要确认手机能否收到时，可以发送一条 Bark 测试通知。")
         warning.setWordWrap(True)
         real_layout.addWidget(warning)
         real_button = QPushButton("发送一条测试通知…")
         real_button.clicked.connect(self._enqueue_real_test)
         real_layout.addWidget(real_button, 0, Qt.AlignmentFlag.AlignLeft)
-        self.diagnostic_status = QLabel("还没有发送测试通知。")
+        self.diagnostic_status = QLabel("测试结果：还没有发送。")
         self.diagnostic_status.setObjectName("MutedLabel")
         real_layout.addWidget(self.diagnostic_status)
         layout.addWidget(real)
@@ -446,6 +458,8 @@ class SettingsPage(QWidget):
 
     def _instance_count_changed(self, index: int) -> None:
         self.instance_cards["MAA2"].setVisible(index == 1)
+        if "MAA2 未运行" in self.preview_buttons:
+            self.preview_buttons["MAA2 未运行"].setVisible(index == 1)
         if not self._loading:
             self._mark_dirty()
 
@@ -490,7 +504,7 @@ class SettingsPage(QWidget):
 
     def _collect(self) -> dict:
         data = deepcopy(self._snapshot)
-        int_fields = {"bark_retry_attempts", "ai_max_calls_per_day"}
+        int_fields = {"bark_retry_attempts", "ai_max_calls_per_day", "resource_sample_abnormal_steady_minutes"}
         float_fields = {
             "memory_pressure_percent", "memory_critical_percent", "memory_critical_available_mb",
             "memory_pressure_sustain_minutes", "memory_critical_sustain_minutes", "bark_retry_sleep_seconds",
@@ -558,13 +572,14 @@ class SettingsPage(QWidget):
         memory_critical = float(data.get("memory_critical_percent", 0))
         pressure_minutes = float(data.get("memory_pressure_sustain_minutes", -1))
         critical_minutes = float(data.get("memory_critical_sustain_minutes", -1))
+        steady_sample_minutes = int(data.get("resource_sample_abnormal_steady_minutes", 0))
         memory_available = float(data.get("memory_critical_available_mb", 0))
         if not 1 <= memory_pressure <= 100 or not 1 <= memory_critical <= 100:
             raise ValueError("内存占用阈值必须在 1% 到 100% 之间。")
         if memory_pressure > memory_critical:
             raise ValueError("普通报警阈值不能高于严重报警阈值。")
-        if pressure_minutes < 0 or critical_minutes < 0 or memory_available <= 0:
-            raise ValueError("内存报警持续时间不能为负数，最低可用内存必须大于 0。")
+        if pressure_minutes < 0 or critical_minutes < 0 or memory_available <= 0 or steady_sample_minutes < 1:
+            raise ValueError("内存提醒时间不能为负数；最低可用内存和记录间隔必须大于 0。")
         for _label, key, _kind in TIMING_FIELDS:
             if float(data.get(key, 0)) < 0:
                 raise ValueError("时间不能小于 0。")

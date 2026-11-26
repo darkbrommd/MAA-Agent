@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import threading
 import sys
+import calendar
+import json
 from collections import OrderedDict
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
@@ -107,6 +109,53 @@ class _TaskSignals(QObject):
     finished = Signal(object)
 
 
+def resource_month_markers(base_dir: Path, year: int, month: int, start_hour: int = 4) -> dict[date, str]:
+    last_day = calendar.monthrange(year, month)[1]
+    start = date(year, month, 1)
+    end = date(year, month, last_day)
+    markers = {start + timedelta(days=offset): "none" for offset in range(last_day)}
+    paths = set()
+    for day in markers:
+        for source_day in _source_days(day, start_hour):
+            paths.add(resource_history.history_path(base_dir, source_day, start_hour))
+    for path in paths:
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            try:
+                row = json.loads(line)
+                day = datetime.fromtimestamp(float(row.get("epoch", 0))).date()
+            except (json.JSONDecodeError, TypeError, ValueError, OSError):
+                continue
+            if day < start or day > end:
+                continue
+            if bool(row.get("abnormal")):
+                markers[day] = "warning"
+            elif markers[day] == "none":
+                markers[day] = "normal"
+    return markers
+
+
+class _MarkerTask(QRunnable):
+    def __init__(self, request_id: int, base_dir: Path, year: int, month: int, start_hour: int):
+        super().__init__()
+        self.request_id = request_id
+        self.base_dir = base_dir
+        self.year = year
+        self.month = month
+        self.start_hour = start_hour
+        self.signals = _TaskSignals()
+
+    def run(self) -> None:
+        try:
+            markers = resource_month_markers(self.base_dir, self.year, self.month, self.start_hour)
+            self.signals.finished.emit((self.request_id, markers, ""))
+        except Exception as exc:
+            self.signals.finished.emit((self.request_id, {}, str(exc)))
+
+
 class _LoadTask(QRunnable):
     def __init__(
         self,
@@ -155,6 +204,7 @@ class ResourceService(QObject):
 
     loaded = Signal(int, object)
     failed = Signal(int, str)
+    markers_loaded = Signal(object)
 
     def __init__(
         self,
@@ -185,6 +235,8 @@ class ResourceService(QObject):
         self._pending: tuple[int, date, int] | None = None
         self._task_serial = 0
         self._active_tasks: dict[int, _LoadTask] = {}
+        self._marker_request_id = 0
+        self._marker_tasks: dict[int, _MarkerTask] = {}
 
         self._debounce_timer = QTimer(self)
         self._debounce_timer.setSingleShot(True)
@@ -219,6 +271,21 @@ class ResourceService(QObject):
     def clear_cache(self) -> None:
         with self._cache_lock:
             self._cache.clear()
+
+    def request_month_markers(self, year: int, month: int, start_hour: int = 4) -> int:
+        self._marker_request_id += 1
+        request_id = self._marker_request_id
+        task = _MarkerTask(request_id, self._base_dir, int(year), int(month), int(start_hour))
+        self._marker_tasks[request_id] = task
+        task.signals.finished.connect(self._on_marker_outcome, Qt.ConnectionType.QueuedConnection)
+        self._thread_pool.start(task)
+        return request_id
+
+    def _on_marker_outcome(self, outcome) -> None:
+        request_id, markers, _error = outcome
+        self._marker_tasks.pop(request_id, None)
+        if request_id == self._marker_request_id and markers:
+            self.markers_loaded.emit(markers)
 
     def _start_pending(self) -> None:
         pending = self._pending

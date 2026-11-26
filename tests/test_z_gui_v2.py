@@ -26,6 +26,7 @@ from PySide6.QtGui import QImage, QPainter, QWheelEvent
 from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QPushButton
 
 from gui.components.resource_chart import ResourceChart
+from gui.components.date_picker import DatePicker
 from gui.components.dialogs import ResourceDetailDialog, ScheduleErrorDialog
 from gui.components.responsive_layout import responsive_card_rect
 from gui.components.timeline_delegate import TimelineDelegate, compute_card_layout
@@ -90,6 +91,18 @@ class GuiV2Tests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
+
+    def test_date_picker_keeps_month_markers_and_requests_visible_month(self):
+        picker = DatePicker(date(2026, 11, 26))
+        markers = {date(2026, 11, 25): "warning", date(2026, 11, 26): "normal"}
+        picker.set_markers(markers)
+        requested = []
+        picker.month_changed.connect(lambda year, month: requested.append((year, month)))
+        picker.open_calendar()
+        self.assertEqual(picker._popup._markers, markers)
+        self.assertEqual(requested[-1], (2026, 11))
+        picker._popup.close()
+        picker.close()
 
     def test_theme_tokens_and_qss_are_complete(self):
         for theme in (DARK, LIGHT):
@@ -219,6 +232,7 @@ class GuiV2Tests(unittest.TestCase):
             self.assertNotIn("全部配置", section_names)
             self.assertEqual(page.instance_count.currentIndex(), 0)
             self.assertTrue(page.instance_cards["MAA2"].isHidden())
+            self.assertTrue(page.preview_buttons["MAA2 未运行"].isHidden())
             proxy_toggles = page._toggles["enable_proxy_healthcheck"]
             self.assertEqual(len(proxy_toggles), 2)
             proxy_toggles[0].toggled.emit(False)
@@ -242,6 +256,7 @@ class GuiV2Tests(unittest.TestCase):
             self.assertEqual(collected["maa_log_paths"], ["D:/custom/asst.log"])
             page.instance_count.setCurrentIndex(1)
             self.assertFalse(page.instance_cards["MAA2"].isHidden())
+            self.assertFalse(page.preview_buttons["MAA2 未运行"].isHidden())
             window._allow_close = True
             window.process_timer.stop()
             window.process_service.wait()
@@ -482,6 +497,46 @@ class GuiV2Tests(unittest.TestCase):
             self.assertEqual(context["mode"], "reset")
             QThreadPool.globalInstance().waitForDone(3000)
             process_events(80)
+            page.close()
+
+    def test_schedule_mouse_wheel_uses_short_fixed_step(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base_dir = Path(temporary)
+            (base_dir / "config").mkdir(parents=True)
+            (base_dir / "state").mkdir()
+            (base_dir / "config" / "config.json").write_text(
+                json.dumps({"maa_schedule": {}, "maa_instance_dirs": {}}), encoding="utf-8"
+            )
+            page = SchedulePage(base_dir, {})
+            QThreadPool.globalInstance().waitForDone(3000)
+            process_events(80)
+            base = datetime(2026, 11, 24)
+            rows = tuple({
+                "label": "MAA1",
+                "datetime": base + timedelta(hours=index),
+                "original_datetime": base + timedelta(hours=index),
+                "config": "任务",
+                "state": "future",
+                "status_title": "等待运行",
+                "status_detail": "到点后会提醒",
+                "skipped": False,
+                "override": None,
+            } for index in range(24))
+            page.model.set_rows(rows)
+            page.resize(900, 420)
+            page.show()
+            process_events(100)
+            page._loading = False
+            bar = page.list_view.verticalScrollBar()
+            bar.setValue(bar.maximum() // 2)
+            before = bar.value()
+            event = QWheelEvent(
+                QPointF(20, 20), QPointF(20, 20), QPoint(), QPoint(0, -120),
+                Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                Qt.ScrollPhase.NoScrollPhase, False,
+            )
+            QApplication.sendEvent(page.list_view.viewport(), event)
+            self.assertEqual(bar.value() - before, page._wheel_step_px)
             page.close()
 
     def test_blocked_wheel_tail_is_consumed_instead_of_replayed(self):

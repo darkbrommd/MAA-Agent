@@ -138,6 +138,7 @@ class ResourcesPage(QWidget):
         self.service = ResourceService(self.base_dir, parent=self)
         self.service.loaded.connect(self._on_loaded)
         self.service.failed.connect(self._on_failed)
+        self.service.markers_loaded.connect(self._show_month_markers)
         self.model = ResourceModel(self)
         self.delegate = _ResourceDelegate(theme, self)
         self._whitelist_workers: set[_WhitelistWorker] = set()
@@ -188,6 +189,7 @@ class ResourcesPage(QWidget):
         navigation.addWidget(previous)
         self.date_picker = DatePicker(self.selected_day)
         self.date_picker.date_changed.connect(self.request_day)
+        self.date_picker.month_changed.connect(self._request_month_markers)
         navigation.addWidget(self.date_picker)
         navigation.addWidget(next_button)
         navigation.addWidget(today)
@@ -291,6 +293,13 @@ class ResourcesPage(QWidget):
         self._update_day_label()
         self.summary.setText("正在载入记录…")
         self.service.request_day(selected, self.start_hour)
+        self._request_month_markers(selected.year, selected.month)
+
+    def _request_month_markers(self, year: int, month: int) -> None:
+        self.service.request_month_markers(year, month, self.start_hour)
+
+    def _show_month_markers(self, markers: dict[date, str]) -> None:
+        self.date_picker.set_markers(markers)
 
     def _update_day_label(self) -> None:
         end = self.selected_day + timedelta(days=1)

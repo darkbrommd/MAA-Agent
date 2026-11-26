@@ -90,6 +90,7 @@ class SchedulePage(QWidget):
         self._scroll_intent = False
         self._wheel_blocked = False
         self._extension_direction = 0
+        self._wheel_step_px = 48
         self._anchor_datetime: datetime | None = None
         self._preserve_key: tuple | None = None
         self._preserve_y = 0
@@ -350,6 +351,11 @@ class SchedulePage(QWidget):
                 return True
             self._scroll_intent = True
             QTimer.singleShot(140, self._clear_scroll_intent)
+            if event.pixelDelta().isNull() and delta:
+                steps = delta / 120.0
+                bar.setValue(round(bar.value() - steps * self._wheel_step_px))
+                event.accept()
+                return True
         return super().eventFilter(watched, event)
 
     def _clear_scroll_intent(self) -> None:

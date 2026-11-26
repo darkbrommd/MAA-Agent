@@ -4,6 +4,7 @@ import calendar
 from datetime import date
 
 from PySide6.QtCore import QDate, QPoint, Qt, Signal
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -16,8 +17,28 @@ from PySide6.QtWidgets import (
 )
 
 
+class _CalendarDayButton(QPushButton):
+    _COLORS = {"warning": "#E3B341", "normal": "#38B880", "none": "#6E7681"}
+
+    def __init__(self, text: str, marker: str = "", parent=None):
+        super().__init__(text, parent)
+        self.marker = marker
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        color = self._COLORS.get(self.marker)
+        if not color:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(color))
+        painter.drawEllipse(self.width() // 2 - 3, self.height() - 8, 6, 6)
+
+
 class _CalendarPanel(QFrame):
     date_selected = Signal(object)
+    month_changed = Signal(int, int)
 
     def __init__(self, selected: date, parent=None):
         super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
@@ -27,6 +48,7 @@ class _CalendarPanel(QFrame):
         self._year = selected.year
         self._month = selected.month
         self._year_view = False
+        self._markers: dict[date, str] = {}
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(16, 16, 16, 16)
         self._header = QHBoxLayout()
@@ -61,6 +83,11 @@ class _CalendarPanel(QFrame):
         self._year_view = False
         self._draw()
 
+    def set_markers(self, markers: dict[date, str]) -> None:
+        self._markers.update(markers)
+        if not self._year_view:
+            self._draw()
+
     def _clear(self) -> None:
         while self.grid.count():
             item = self.grid.takeAt(0)
@@ -78,6 +105,8 @@ class _CalendarPanel(QFrame):
             value = QDate(self._year, self._month, 1).addMonths(delta)
             self._year, self._month = value.year(), value.month()
         self._draw()
+        if not self._year_view:
+            self.month_changed.emit(self._year, self._month)
 
     def _draw(self) -> None:
         self._clear()
@@ -101,9 +130,10 @@ class _CalendarPanel(QFrame):
                 if not day_number:
                     self.grid.addWidget(QLabel(""), row_index, column)
                     continue
-                button = QPushButton(str(day_number))
+                current = date(self._year, self._month, day_number)
+                button = _CalendarDayButton(str(day_number), self._markers.get(current, ""))
                 button.setCheckable(True)
-                button.setChecked(date(self._year, self._month, day_number) == self._selected)
+                button.setChecked(current == self._selected)
                 button.clicked.connect(lambda _checked=False, value=day_number: self._choose(date(self._year, self._month, value)))
                 self.grid.addWidget(button, row_index, column)
 
@@ -111,6 +141,7 @@ class _CalendarPanel(QFrame):
         self._month = month
         self._year_view = False
         self._draw()
+        self.month_changed.emit(self._year, self._month)
 
     def _choose(self, selected: date) -> None:
         self._selected = selected
@@ -120,6 +151,7 @@ class _CalendarPanel(QFrame):
 
 class DatePicker(QWidget):
     date_changed = Signal(object)
+    month_changed = Signal(int, int)
 
     def __init__(self, selected: date | None = None, parent=None):
         super().__init__(parent)
@@ -132,6 +164,7 @@ class DatePicker(QWidget):
         layout.addWidget(self.button)
         self._popup = _CalendarPanel(self._date, self)
         self._popup.date_selected.connect(self.set_date)
+        self._popup.month_changed.connect(self.month_changed)
         self._update_text()
 
     def date(self) -> date:
@@ -150,8 +183,12 @@ class DatePicker(QWidget):
     def _update_text(self) -> None:
         self.button.setText(f"{self._date:%Y-%m-%d}  ▾")
 
+    def set_markers(self, markers: dict[date, str]) -> None:
+        self._popup.set_markers(markers)
+
     def open_calendar(self) -> None:
         self._popup.set_date(self._date)
+        self.month_changed.emit(self._date.year, self._date.month)
         window = self.window()
         center = window.mapToGlobal(window.rect().center())
         point = QPoint(center.x() - self._popup.width() // 2, center.y() - self._popup.height() // 2)

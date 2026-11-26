@@ -8,7 +8,7 @@ import tempfile
 import threading
 import time
 import unittest
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -31,6 +31,7 @@ SPEC.loader.exec_module(RESOURCE_SERVICE_MODULE)
 ResourceService = RESOURCE_SERVICE_MODULE.ResourceService
 ResourceSnapshot = RESOURCE_SERVICE_MODULE.ResourceSnapshot
 resource_file_signature = RESOURCE_SERVICE_MODULE.resource_file_signature
+resource_month_markers = RESOURCE_SERVICE_MODULE.resource_month_markers
 
 
 def process_until(predicate, timeout_ms=2500):
@@ -68,6 +69,22 @@ class ResourceServiceTests(unittest.TestCase):
         )
         self.services.append(service)
         return service
+
+    def test_month_markers_distinguish_warning_normal_and_missing_days(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base_dir = Path(temporary)
+            history = base_dir / "state" / "resource_history"
+            history.mkdir(parents=True)
+            rows = (
+                {"epoch": datetime(2026, 11, 2, 12).timestamp(), "abnormal": False},
+                {"epoch": datetime(2026, 11, 3, 12).timestamp(), "abnormal": True},
+            )
+            (history / "2026-11-02.jsonl").write_text(json.dumps(rows[0]) + "\n", encoding="utf-8")
+            (history / "2026-11-03.jsonl").write_text(json.dumps(rows[1]) + "\n", encoding="utf-8")
+            markers = resource_month_markers(base_dir, 2026, 11, 4)
+            self.assertEqual(markers[date(2026, 11, 2)], "normal")
+            self.assertEqual(markers[date(2026, 11, 3)], "warning")
+            self.assertEqual(markers[date(2026, 11, 4)], "none")
 
     def test_signature_tracks_mtime_size_and_missing_source(self):
         with tempfile.TemporaryDirectory() as temporary:

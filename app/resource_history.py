@@ -105,7 +105,7 @@ def _process_totals(names: set[str]) -> tuple[float, int]:
     return round(total, 1), count
 
 
-def _last_sample_time(path: Path) -> float:
+def _last_sample(path: Path) -> dict:
     try:
         with path.open("rb") as handle:
             handle.seek(0, 2)
@@ -114,12 +114,46 @@ def _last_sample_time(path: Path) -> float:
             lines = handle.read().decode("utf-8", errors="replace").splitlines()
         for line in reversed(lines):
             try:
-                return float(json.loads(line).get("epoch", 0))
+                value = json.loads(line)
+                return value if isinstance(value, dict) else {}
             except Exception:
                 continue
     except OSError:
         pass
-    return 0.0
+    return {}
+
+
+def _sample_state(row: dict) -> tuple[bool, bool, bool]:
+    state = row.get("sample_state") or {}
+    if isinstance(state, dict) and state:
+        return bool(state.get("memory")), bool(state.get("cpu")), bool(state.get("missing_maa"))
+    reasons = tuple(str(value) for value in (row.get("abnormal_reasons") or ()))
+    return (
+        any(value.startswith("内存 ") for value in reasons),
+        any(value.startswith("CPU ") for value in reasons),
+        any(value.startswith("MAA 进程") for value in reasons),
+    )
+
+
+def adaptive_sample_interval(last: dict, current: dict, cfg: dict) -> float:
+    """Return the next history interval without hiding meaningful changes."""
+    abnormal = bool(current.get("abnormal"))
+    base = float(cfg.get("resource_sample_abnormal_minutes" if abnormal else "resource_sample_normal_minutes", 1 if abnormal else 5))
+    if not last:
+        return 0.0
+    if _sample_state(last) != _sample_state(current):
+        return 0.0
+    if not abnormal:
+        return base
+    stable = (
+        abs(float(current.get("ram", 0)) - float(last.get("ram", 0))) < 2.0
+        and abs(float(current.get("cpu", 0)) - float(last.get("cpu", 0))) < 10.0
+        and int(current.get("maa_count", 0)) == int(last.get("maa_count", 0))
+        and int(current.get("mumu_count", 0)) == int(last.get("mumu_count", 0))
+    )
+    if stable:
+        return max(base, float(cfg.get("resource_sample_abnormal_steady_minutes", 5)))
+    return base
 
 
 def sample(base_dir: Path, cfg: dict, *, force: bool = False) -> dict | None:
@@ -131,10 +165,6 @@ def sample(base_dir: Path, cfg: dict, *, force: bool = False) -> dict | None:
     memory_abnormal = vm.percent >= float(cfg.get("memory_pressure_percent", 88))
     cpu_abnormal = cpu >= float(cfg.get("cpu_high_percent", 92))
     is_abnormal = memory_abnormal or cpu_abnormal
-    interval_minutes = float(cfg.get("resource_sample_abnormal_minutes" if is_abnormal else "resource_sample_normal_minutes", 1 if is_abnormal else 5))
-    if not force and time.time() - _last_sample_time(path) < max(10, interval_minutes * 60 - 5):
-        return None
-
     maa_names = {str(x).lower() for x in cfg.get("maa_process_names", ["MAA.exe"])}
     mumu_names = {str(x).lower() for x in cfg.get("mumu_process_names", [])}
     maa_mb, maa_count = _process_totals(maa_names)
@@ -142,7 +172,6 @@ def sample(base_dir: Path, cfg: dict, *, force: bool = False) -> dict | None:
     expected_maa = max(1, len(cfg.get("maa_instance_dirs", {})) or 2)
     missing_maa = maa_count < expected_maa
     abnormal = is_abnormal or missing_maa
-    top_processes, top_apps, agent_mb = _process_snapshot(cfg)
     total_mb = vm.total / 1048576
     available_mb = vm.available / 1048576
     used_mb = max(0.0, total_mb - available_mb)
@@ -153,6 +182,23 @@ def sample(base_dir: Path, cfg: dict, *, force: bool = False) -> dict | None:
         reasons.append(f"CPU {cpu:.0f}% 达到阈值")
     if missing_maa:
         reasons.append(f"MAA 进程 {maa_count}/{expected_maa}")
+    sample_state = {"memory": memory_abnormal, "cpu": cpu_abnormal, "missing_maa": missing_maa}
+    probe = {
+        "epoch": time.time(),
+        "cpu": round(cpu, 1),
+        "ram": round(float(vm.percent), 1),
+        "maa_count": maa_count,
+        "mumu_count": mumu_count,
+        "abnormal": bool(abnormal),
+        "abnormal_reasons": reasons,
+        "sample_state": sample_state,
+    }
+    last = _last_sample(path)
+    interval_minutes = adaptive_sample_interval(last, probe, cfg)
+    if not force and time.time() - float(last.get("epoch", 0) or 0) < max(0, interval_minutes * 60 - 5):
+        return None
+
+    top_processes, top_apps, agent_mb = _process_snapshot(cfg)
     row = {
         "time": now.astimezone().isoformat(timespec="seconds"),
         "epoch": time.time(),
@@ -169,6 +215,7 @@ def sample(base_dir: Path, cfg: dict, *, force: bool = False) -> dict | None:
         "expected_maa_count": expected_maa,
         "abnormal": bool(abnormal),
         "abnormal_reasons": reasons,
+        "sample_state": sample_state,
         "top_apps": top_apps[:8],
     }
     if abnormal:
