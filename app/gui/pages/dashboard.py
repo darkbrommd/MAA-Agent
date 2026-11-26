@@ -116,14 +116,15 @@ class DashboardPage(QWidget):
         self._last_static_refresh = 0.0
         self._log_lines: list[str] = []
         self._schedule_rows: tuple[dict, ...] = ()
+        self._maa_pills: dict[str, QLabel] = {}
         self._override_workers: dict[_DashboardOverrideWorker, tuple[ToggleSwitch, bool]] = {}
         self._build_ui()
         self.dashboard_service = DashboardService(self.base_dir, parent=self)
         self.dashboard_service.loaded.connect(self._apply_dashboard)
-        self.dashboard_service.failed.connect(lambda message: self.status_label.setText(f"总览读取失败：{message}"))
+        self.dashboard_service.failed.connect(lambda message: self._show_status(f"总览读取失败：{message}"))
         self.log_service = LogService(self.base_dir, parent=self)
         self.log_service.chunk_ready.connect(self._apply_log_chunk)
-        self.log_service.failed.connect(lambda message: self.status_label.setText(f"日志读取失败：{message}"))
+        self.log_service.failed.connect(lambda message: self._show_status(f"日志读取失败：{message}"))
         self._split_save = QTimer(self)
         self._split_save.setSingleShot(True)
         self._split_save.setInterval(180)
@@ -136,9 +137,22 @@ class DashboardPage(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 22, 24, 24)
         root.setSpacing(12)
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
         title = QLabel("总览")
         title.setObjectName("PageTitle")
-        root.addWidget(title)
+        title_row.addWidget(title)
+        title_row.addStretch(1)
+        self.agent_pill = self._status_pill("Agent · 读取中", "warning", 150)
+        title_row.addWidget(self.agent_pill)
+        self.maa_status_host = QWidget()
+        self.maa_status_layout = QHBoxLayout(self.maa_status_host)
+        self.maa_status_layout.setContentsMargins(0, 0, 0, 0)
+        self.maa_status_layout.setSpacing(8)
+        title_row.addWidget(self.maa_status_host)
+        self.mumu_pill = self._status_pill("MuMu · 读取中", "warning", 155)
+        title_row.addWidget(self.mumu_pill)
+        root.addLayout(title_row)
 
         metrics = QHBoxLayout()
         metrics.setSpacing(12)
@@ -188,7 +202,7 @@ class DashboardPage(QWidget):
         self.chart_toggle.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.chart_toggle.clicked.connect(self._toggle_chart)
         tools.addWidget(self.chart_toggle)
-        clear = QPushButton("隐藏这些记录")
+        clear = QPushButton("清除总览记录")
         clear.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         clear.setToolTip("只清空这里的显示，完整记录仍保留在日志中心。")
         clear.clicked.connect(self._clear_home_log)
@@ -212,8 +226,9 @@ class DashboardPage(QWidget):
         self.main_splitter.setStretchFactor(0, 4)
         self.main_splitter.setStretchFactor(1, 6)
         root.addWidget(self.main_splitter, 1)
-        self.status_label = QLabel("等待刷新")
+        self.status_label = QLabel("")
         self.status_label.setObjectName("MutedLabel")
+        self.status_label.hide()
         root.addWidget(self.status_label)
 
         if bool(self.page_state.get("chart_collapsed")):
@@ -231,6 +246,17 @@ class DashboardPage(QWidget):
                 self._last_static_refresh = now
 
     def update_process_snapshot(self, snapshot: ProcessSnapshot) -> None:
+        self._set_status_pill(
+            self.agent_pill,
+            f"Agent · {'运行中' if snapshot.agent_running else '已停止'}",
+            "running" if snapshot.agent_running else "stopped",
+        )
+        self._sync_maa_pills(snapshot)
+        self._set_status_pill(
+            self.mumu_pill,
+            f"MuMu · {snapshot.mumu_count} 个进程" if snapshot.mumu_count else "MuMu · 未运行",
+            "running" if snapshot.mumu_count else "stopped",
+        )
         self.memory_card.set_metric(snapshot.memory_percent, f"{snapshot.memory_percent:.0f}%", f"已用 {snapshot.memory_used_gb:.1f} GB")
         for index, card in enumerate(self.process_cards):
             card.set_process(snapshot.top_processes[index] if index < len(snapshot.top_processes) else None)
@@ -239,7 +265,7 @@ class DashboardPage(QWidget):
         self._schedule_rows = tuple(dict(row) for row in snapshot.schedule_rows)
         self._render_schedule_rows()
         self.chart.set_data(snapshot.resource_rows, snapshot.day)
-        self.status_label.setText(f"已更新 · {datetime.now():%H:%M:%S}")
+        self._clear_status()
 
     def _render_schedule_rows(self) -> None:
         self.schedule_list.clear()
@@ -350,7 +376,7 @@ class DashboardPage(QWidget):
 
     def _override_finished(self, worker: _DashboardOverrideWorker, message: str) -> None:
         self._override_workers.pop(worker, None)
-        self.status_label.setText(message)
+        self._show_status(message)
         self._last_static_refresh = 0.0
         self.refresh_tick(force=True)
 
@@ -360,7 +386,7 @@ class DashboardPage(QWidget):
             toggle, original = pending
             toggle.setEnabled(True)
             toggle.setChecked(original)
-        self.status_label.setText(f"这次计划没有保存成功：{message}")
+        self._show_status(f"这次计划没有保存成功：{message}")
         self._last_static_refresh = 0.0
         self.refresh_tick(force=True)
 
@@ -408,6 +434,63 @@ class DashboardPage(QWidget):
         self.page_state["log_cutoff"] = datetime.now().isoformat(timespec="seconds")
         self.log_view.clear()
         self.log_view.setPlaceholderText("此前记录已从主页隐藏。")
+
+    @staticmethod
+    def _status_pill(text: str, status: str, maximum_width: int) -> QLabel:
+        pill = QLabel(text)
+        pill.setObjectName("StatusPill")
+        pill.setProperty("status", status)
+        pill.setMaximumWidth(maximum_width)
+        return pill
+
+    @staticmethod
+    def _set_status_pill(label: QLabel, text: str, status: str) -> None:
+        label.setText(text)
+        label.setToolTip(text)
+        if label.property("status") == status:
+            return
+        label.setProperty("status", status)
+        label.style().unpolish(label)
+        label.style().polish(label)
+
+    def _sync_maa_pills(self, snapshot: ProcessSnapshot) -> None:
+        expected = {item.label for item in snapshot.maa_instances}
+        for label in tuple(self._maa_pills):
+            if label in expected or (label == "" and not expected):
+                continue
+            pill = self._maa_pills.pop(label)
+            self.maa_status_layout.removeWidget(pill)
+            pill.deleteLater()
+        if not snapshot.maa_instances:
+            placeholder = self._maa_pills.get("")
+            if placeholder is None:
+                placeholder = self._status_pill("MAA · 未设置", "stopped", 150)
+                self._maa_pills[""] = placeholder
+                self.maa_status_layout.addWidget(placeholder)
+            self._set_status_pill(placeholder, "MAA · 未设置", "stopped")
+            return
+        for item in snapshot.maa_instances:
+            pill = self._maa_pills.get(item.label)
+            if pill is None:
+                pill = self._status_pill("", "stopped", 190)
+                self._maa_pills[item.label] = pill
+                self.maa_status_layout.addWidget(pill)
+            self._set_status_pill(
+                pill,
+                f"{item.display_name} · {'运行中' if item.running else '未运行'}",
+                "running" if item.running else "stopped",
+            )
+
+    def show_process_failure(self, _message: str) -> None:
+        self._set_status_pill(self.agent_pill, "Agent · 状态读取失败", "error")
+
+    def _show_status(self, message: str) -> None:
+        self.status_label.setText(message)
+        self.status_label.setVisible(bool(message))
+
+    def _clear_status(self) -> None:
+        self.status_label.clear()
+        self.status_label.hide()
 
     def _toggle_chart(self) -> None:
         visible = not self.chart.isVisible()

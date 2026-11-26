@@ -83,8 +83,8 @@ def decorate_schedule_rows(
                 state, title, detail = "off", "还没确认结果", "运行状态长时间没有更新"
         elif run_status == "completed":
             completed = str(run.get("completed_at") or "")
-            suffix = f" · {completed[11:16]} 完成" if len(completed) >= 16 else ""
-            state, title, detail = "done", "已完成", f"任务已完成{suffix}"
+            detail = completed[11:16] if len(completed) >= 16 else "任务已结束"
+            state, title = "done", "已完成"
         else:
             daily = daily_states.get(when.date(), {})
             expected = when.strftime("%Y-%m-%d %H:%M")

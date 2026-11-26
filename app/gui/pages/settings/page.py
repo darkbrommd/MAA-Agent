@@ -41,15 +41,15 @@ SECTIONS = (
 
 TIMING_FIELDS = (
     ("每隔多久检查一次（秒）", "check_interval_seconds", "int"),
-    ("开机后等待多久再提醒（分钟）", "startup_process_grace_minutes", "float"),
-    ("程序关闭多久后提醒（分钟）", "process_missing_sustain_minutes", "float"),
-    ("普通错误持续多久后提醒（分钟）", "generic_error_stall_minutes", "float"),
-    ("连接异常持续多久后提醒（分钟）", "connection_error_stall_minutes", "float"),
-    ("计划到点后等待多久（分钟）", "scheduled_run_grace_minutes", "float"),
-    ("窗口卡住多久后提醒（分钟）", "hung_window_sustain_minutes", "float"),
-    ("每隔多久检查网络（分钟）", "proxy_healthcheck_interval_minutes", "float"),
-    ("网络异常多久后提醒（分钟）", "proxy_failure_sustain_minutes", "float"),
-    ("在线状态上报间隔（分钟）", "heartbeat_interval_minutes", "float"),
+    ("开机后等待多久再提醒（分钟）", "startup_process_grace_minutes", "int"),
+    ("程序关闭多久后提醒（分钟）", "process_missing_sustain_minutes", "int"),
+    ("普通错误持续多久后提醒（分钟）", "generic_error_stall_minutes", "int"),
+    ("连接异常持续多久后提醒（分钟）", "connection_error_stall_minutes", "int"),
+    ("计划到点后等待多久（分钟）", "scheduled_run_grace_minutes", "int"),
+    ("窗口卡住多久后提醒（分钟）", "hung_window_sustain_minutes", "int"),
+    ("每隔多久检查网络（分钟）", "proxy_healthcheck_interval_minutes", "int"),
+    ("网络异常多久后提醒（分钟）", "proxy_failure_sustain_minutes", "int"),
+    ("在线状态上报间隔（分钟）", "heartbeat_interval_minutes", "int"),
 )
 
 LOCAL_PREVIEWS = {
@@ -141,7 +141,7 @@ class SettingsPage(QWidget):
         title = QLabel("设置")
         title.setObjectName("PageTitle")
         outer.addWidget(title)
-        subtitle = QLabel("在这里调整启动方式、提醒和手机通知。改好后点右下角保存。")
+        subtitle = QLabel("改好后点击右下角保存就可以。")
         subtitle.setObjectName("MutedLabel")
         subtitle.setWordWrap(True)
         outer.addWidget(subtitle)
@@ -463,6 +463,8 @@ class SettingsPage(QWidget):
                 value = data.get(key, FIELD_DEFAULTS.get(key, ""))
                 if isinstance(value, list):
                     value = ", ".join(str(item) for item in value)
+                elif self._timing_kinds.get(key) == "int" and value not in (None, ""):
+                    value = int(float(value))
                 edit.setText(str(value) if value is not None else "")
             for key, toggles in self._toggles.items():
                 if key.startswith("autostart:"):

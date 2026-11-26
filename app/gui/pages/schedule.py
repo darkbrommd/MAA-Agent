@@ -148,7 +148,7 @@ class SchedulePage(QWidget):
         toolbar.addWidget(now_button)
         toolbar.addStretch(1)
         root.addLayout(toolbar)
-        hint = QLabel("用开关决定这次计划是否提醒，也可以修改这次提醒的时间。MAA 里的计划照常运行。")
+        hint = QLabel("开关和日期修改只影响当次监测，不会影响 MAA 本身的计划执行。")
         hint.setObjectName("MutedLabel")
         root.addWidget(hint)
         self.status = QLabel("正在读取日程…")
@@ -321,10 +321,10 @@ class SchedulePage(QWidget):
         self._scroll_intent = False
         self._capture_view_anchor()
         if direction < 0:
-            self.window_start -= timedelta(days=2)
+            self.window_start -= timedelta(days=1)
             mode = "extend_up"
         else:
-            self.window_end += timedelta(days=2)
+            self.window_end += timedelta(days=1)
             mode = "extend_down"
         self.refresh(mode)
         return True

@@ -55,14 +55,11 @@ class MainWindow(QMainWindow):
         self.agent_control.busy_changed.connect(self._set_agent_controls_busy)
         self.agent_control.finished.connect(self._agent_action_finished)
         self.process_service.snapshot_ready.connect(self._show_process_snapshot)
-        self.process_service.failed.connect(
-            lambda message: self._set_status_pill(self.agent_pill, "Agent · 状态读取失败", "error")
-        )
+        self.process_service.failed.connect(self._show_process_failure)
         self._pages: dict[str, QWidget] = {}
         self._page_indexes: dict[str, int] = {}
         self._current_page = ""
         self._latest_process_snapshot: ProcessSnapshot | None = None
-        self._maa_pills: dict[str, QLabel] = {}
         self._agent_busy = False
         self._tray = None
         self._allow_close = False
@@ -102,27 +99,12 @@ class MainWindow(QMainWindow):
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(0)
-        status_bar = QFrame()
-        status_bar.setObjectName("TopStatusBar")
-        status_bar.setFixedHeight(56)
-        status_layout = QHBoxLayout(status_bar)
+        self.status_bar = QFrame()
+        self.status_bar.setObjectName("TopStatusBar")
+        self.status_bar.setFixedHeight(56)
+        status_layout = QHBoxLayout(self.status_bar)
         status_layout.setContentsMargins(18, 8, 18, 8)
         status_layout.setSpacing(8)
-        self.agent_pill = QLabel("Agent · 读取中")
-        self.agent_pill.setObjectName("StatusPill")
-        self.agent_pill.setProperty("status", "warning")
-        self.agent_pill.setMaximumWidth(150)
-        self.maa_status_host = QWidget()
-        self.maa_status_layout = QHBoxLayout(self.maa_status_host)
-        self.maa_status_layout.setContentsMargins(0, 0, 0, 0)
-        self.maa_status_layout.setSpacing(8)
-        self.mumu_pill = QLabel("MuMu · 读取中")
-        self.mumu_pill.setObjectName("StatusPill")
-        self.mumu_pill.setProperty("status", "warning")
-        self.mumu_pill.setMaximumWidth(155)
-        status_layout.addWidget(self.agent_pill)
-        status_layout.addWidget(self.maa_status_host)
-        status_layout.addWidget(self.mumu_pill)
         status_layout.addStretch(1)
         self.agent_action = QPushButton("启动 Agent")
         self.agent_action.setObjectName("PrimaryButton")
@@ -134,7 +116,7 @@ class MainWindow(QMainWindow):
         self.restart_action.clicked.connect(lambda: self._confirm_agent_action("restart"))
         status_layout.addWidget(self.agent_action)
         status_layout.addWidget(self.restart_action)
-        content_layout.addWidget(status_bar)
+        content_layout.addWidget(self.status_bar)
         self.stack = QStackedWidget()
         content_layout.addWidget(self.stack, 1)
         shell.addWidget(content, 1)
@@ -175,6 +157,7 @@ class MainWindow(QMainWindow):
             self._page_indexes[key] = self.stack.addWidget(page)
         self.stack.setCurrentIndex(self._page_indexes[key])
         self._current_page = key
+        self.status_bar.setVisible(key == "dashboard")
         self.navigation.set_current(key)
         self.refresh_manager.set_active_page(key)
         if hasattr(self, "process_timer"):
@@ -194,17 +177,6 @@ class MainWindow(QMainWindow):
 
     def _show_process_snapshot(self, snapshot: ProcessSnapshot) -> None:
         self._latest_process_snapshot = snapshot
-        self._set_status_pill(
-            self.agent_pill,
-            f"Agent · {'运行中' if snapshot.agent_running else '已停止'}",
-            "running" if snapshot.agent_running else "stopped",
-        )
-        self._sync_maa_pills(snapshot)
-        self._set_status_pill(
-            self.mumu_pill,
-            f"MuMu · {snapshot.mumu_count} 个进程" if snapshot.mumu_count else "MuMu · 未运行",
-            "running" if snapshot.mumu_count else "stopped",
-        )
         self.agent_action.setText("停止 Agent" if snapshot.agent_running else "启动 Agent")
         self.agent_action.setEnabled(not self._agent_busy)
         self.restart_action.setEnabled(snapshot.agent_running and not self._agent_busy)
@@ -212,41 +184,10 @@ class MainWindow(QMainWindow):
         if isinstance(dashboard, DashboardPage):
             dashboard.update_process_snapshot(snapshot)
 
-    def _sync_maa_pills(self, snapshot: ProcessSnapshot) -> None:
-        expected = {item.label for item in snapshot.maa_instances}
-        for label in tuple(self._maa_pills):
-            if label in expected:
-                continue
-            widget = self._maa_pills.pop(label)
-            self.maa_status_layout.removeWidget(widget)
-            widget.deleteLater()
-        if not snapshot.maa_instances:
-            placeholder = self._maa_pills.get("")
-            if placeholder is None:
-                placeholder = QLabel()
-                placeholder.setObjectName("StatusPill")
-                self._maa_pills[""] = placeholder
-                self.maa_status_layout.addWidget(placeholder)
-            self._set_status_pill(placeholder, "MAA · 未设置", "stopped")
-            return
-        placeholder = self._maa_pills.pop("", None)
-        if placeholder is not None:
-            self.maa_status_layout.removeWidget(placeholder)
-            placeholder.deleteLater()
-        for item in snapshot.maa_instances:
-            pill = self._maa_pills.get(item.label)
-            if pill is None:
-                pill = QLabel()
-                pill.setObjectName("StatusPill")
-                pill.setMaximumWidth(190)
-                self._maa_pills[item.label] = pill
-                self.maa_status_layout.addWidget(pill)
-            pill.setToolTip(f"{item.display_name} · {'运行中' if item.running else '未运行'}")
-            self._set_status_pill(
-                pill,
-                f"{item.display_name} · {'运行中' if item.running else '未运行'}",
-                "running" if item.running else "stopped",
-            )
+    def _show_process_failure(self, message: str) -> None:
+        dashboard = self._pages.get("dashboard")
+        if isinstance(dashboard, DashboardPage):
+            dashboard.show_process_failure(message)
 
     def _run_primary_agent_action(self) -> None:
         running = bool(self._latest_process_snapshot and self._latest_process_snapshot.agent_running)
@@ -273,15 +214,6 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Agent 操作未完成", message)
         self.statusBar().showMessage(message, 6000)
         QTimer.singleShot(900, self.process_service.refresh)
-
-    @staticmethod
-    def _set_status_pill(label: QLabel, text: str, status: str) -> None:
-        label.setText(text)
-        if label.property("status") == status:
-            return
-        label.setProperty("status", status)
-        label.style().unpolish(label)
-        label.style().polish(label)
 
     def event(self, event: QEvent) -> bool:
         if event.type() == QEvent.Type.WindowStateChange:

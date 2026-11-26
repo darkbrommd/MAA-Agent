@@ -205,6 +205,7 @@ class GuiV2Tests(unittest.TestCase):
                 "launch_paths": {"MAA1": "D:/custom/start-maa.cmd", "MuMu": "D:/MuMu.exe"},
                 "auto_start_apps_with_agent": {"MAA1": False, "MuMu": False},
                 "enable_proxy_healthcheck": True,
+                "startup_process_grace_minutes": 10.0,
                 "bark_key": "must-not-appear",
             }
             (base_dir / "config" / "config.json").write_text(json.dumps(config), encoding="utf-8")
@@ -223,6 +224,11 @@ class GuiV2Tests(unittest.TestCase):
             proxy_toggles[0].toggled.emit(False)
             self.assertTrue(all(not toggle.isChecked() for toggle in proxy_toggles))
             self.assertEqual(page._line_edits["bark_key"].echoMode(), QLineEdit.EchoMode.Password)
+            self.assertEqual(page._line_edits["startup_process_grace_minutes"].text(), "10")
+            self.assertEqual(
+                next(label.text() for label in page.findChildren(QLabel) if "右下角保存" in label.text()),
+                "改好后点击右下角保存就可以。",
+            )
             visible_copy = "\n".join(
                 [widget.text() for widget in page.findChildren(QLabel)]
                 + [widget.text() for widget in page.findChildren(QPushButton)]
@@ -467,7 +473,7 @@ class GuiV2Tests(unittest.TestCase):
                 False,
             )
             QApplication.sendEvent(page.list_view.viewport(), event)
-            self.assertEqual(page.window_end, old_end + timedelta(days=2))
+            self.assertEqual(page.window_end, old_end + timedelta(days=1))
             self.assertTrue(page._wheel_blocked)
             selected = page.selected_day + timedelta(days=1)
             page.set_day(selected)
@@ -871,6 +877,7 @@ class GuiV2Tests(unittest.TestCase):
             )
             window = MainWindow(base_dir)
             self.assertEqual(set(window._pages), {"schedule"})
+            self.assertTrue(window.status_bar.isHidden())
             window.navigation._toggle_collapsed()
             self.assertEqual(window.navigation.width(), 68)
             window.navigation._toggle_collapsed()
@@ -883,13 +890,18 @@ class GuiV2Tests(unittest.TestCase):
             self.assertEqual(resources.history_splitter.count(), 2)
             chosen = date(2026, 11, 20)
             resources.request_day(chosen)
+            self.assertEqual(resources.date_picker.date(), chosen)
             window.show_page("schedule")
             window.show_page("resources")
             self.assertIs(window._pages["schedule"], schedule)
             self.assertIs(window._pages["resources"], resources)
             self.assertEqual(resources.selected_day, chosen)
             window.show_page("dashboard")
+            self.assertFalse(window.status_bar.isHidden())
+            dashboard = window._pages["dashboard"]
+            self.assertGreaterEqual(len(dashboard.findChildren(QLabel, "StatusPill")), 2)
             window.show_page("news")
+            self.assertTrue(window.status_bar.isHidden())
             window.show_page("logs")
             self.assertIsInstance(window._pages["dashboard"], DashboardPage)
             self.assertIsInstance(window._pages["news"], NewsPage)

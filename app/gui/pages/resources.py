@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui.components.resource_chart import ResourceChart
+from gui.components.date_picker import DatePicker
 from gui.components.responsive_layout import responsive_card_rect
 from gui.components.dialogs import show_resource_detail
 from gui.models.resource_model import ResourceModel
@@ -176,17 +177,20 @@ class ResourcesPage(QWidget):
         history_layout = QVBoxLayout(history)
         history_layout.setContentsMargins(0, 0, 0, 0)
         navigation = QHBoxLayout()
-        previous = QPushButton("‹ 前一天")
-        next_button = QPushButton("后一天 ›")
-        today = QPushButton("今天")
+        previous = QPushButton("‹")
+        next_button = QPushButton("›")
+        today = QPushButton("回到今天")
         for button in (previous, today, next_button):
             button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         previous.clicked.connect(lambda: self.request_day(self.selected_day - timedelta(days=1)))
         next_button.clicked.connect(lambda: self.request_day(self.selected_day + timedelta(days=1)))
         today.clicked.connect(lambda: self.request_day(date.today()))
         navigation.addWidget(previous)
-        navigation.addWidget(today)
+        self.date_picker = DatePicker(self.selected_day)
+        self.date_picker.date_changed.connect(self.request_day)
+        navigation.addWidget(self.date_picker)
         navigation.addWidget(next_button)
+        navigation.addWidget(today)
         navigation.addStretch(1)
         self.day_label = QLabel()
         navigation.addWidget(self.day_label)
@@ -283,6 +287,7 @@ class ResourcesPage(QWidget):
     def request_day(self, selected: date) -> None:
         self.selected_day = selected
         self.page_state["selected_day"] = selected.isoformat()
+        self.date_picker.set_date(selected, emit=False)
         self._update_day_label()
         self.summary.setText("正在载入记录…")
         self.service.request_day(selected, self.start_hour)
