@@ -66,7 +66,8 @@ def format_update_time(value: str) -> str:
         moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
         return text.replace("T", " ")
-    return moment.astimezone().strftime("%Y年%m月%d日 %H:%M") if moment.tzinfo else moment.strftime("%Y年%m月%d日 %H:%M")
+    display = moment.astimezone() if moment.tzinfo else moment
+    return f"{display.year:04d}年{display.month:02d}月{display.day:02d}日 {display.hour:02d}:{display.minute:02d}"
 
 
 class NewsPage(QWidget):
