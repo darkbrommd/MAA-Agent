@@ -6,6 +6,7 @@ import sys
 from agent_runtime import PACKAGED_AGENT_FLAG
 
 GUI_V2_FLAG = "--gui-v2"
+GUI_V1_FLAG = "--gui-v1"
 
 
 def main() -> None:
@@ -13,12 +14,12 @@ def main() -> None:
         from agent import main as run_agent
 
         run_agent()
-    elif GUI_V2_FLAG in sys.argv[1:] or os.environ.get("MAA_AGENT_GUI", "").lower() == "v2":
-        from gui.main import main as run_manager
+    elif GUI_V1_FLAG in sys.argv[1:] or os.environ.get("MAA_AGENT_GUI", "").lower() == "v1":
+        from maa_agent_gui import main as run_manager
 
         run_manager()
     else:
-        from maa_agent_gui import main as run_manager
+        from gui.main import main as run_manager
 
         run_manager()
 

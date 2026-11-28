@@ -17,7 +17,7 @@ MAA Agent 是一个 Windows 桌面工具，用来查看 MAA 的计划任务、�
 
 | 路径 | 作用 |
 |---|---|
-| `app/` | Agent、稳定版 Tk GUI，以及 `app/gui/` 下并行开发的 PySide6 2.0 GUI。 |
+| `app/` | Agent、默认的 PySide6 2.0 GUI，以及保留用于回退的旧 Tk GUI。 |
 | `tools/windows/` | Windows 辅助入口；根目录只保留日常启动器。 |
 | `tests/` | 自动回归测试。 |
 | `docs/` | 部署、操作、测试和历史说明。 |
@@ -66,8 +66,8 @@ Agent 是后台监控主体，GUI 是控制和观察界面。隐藏或关闭 GUI
 ## 实现习惯
 
 - 目标环境是 Windows 10/11 和 Python 3.11+。
-- 稳定版 Tk 仍是单 UI 线程；网络和耗时任务放到后台线程，再通过 `root.after` 更新界面。
-- PySide6 2.0 预览通过 `launcher.py --gui-v2` 或 `MAA_AGENT_GUI=v2` 单独启动；默认入口仍是稳定版 Tk。后台 `--maa-agent-background` 分支必须保持零 PySide6 导入。
+- 默认桌面入口是 PySide6 2.0 GUI；旧 Tk 界面仅作为回退，可通过 `launcher.py --gui-v1` 或 `MAA_AGENT_GUI=v1` 打开。
+- 后台 `--maa-agent-background` 分支必须保持零 PySide6 导入，不能因为默认界面切换而增加 Agent 内存。
 - 优先做边界清楚的小修改。需要重构时，先用测试固定现有行为。
 - 保持现有用户配置向后兼容；新增配置应提供安全、可理解的默认值。
 - 面向用户的文字尽量直接说明“发生了什么、会做什么”，少使用内部函数名和防御性话术。

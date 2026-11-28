@@ -85,7 +85,7 @@ Local `config.json`, secrets, logs, runtime state, backups, and the virtual envi
 
 ## Development and tests
 
-Current stable version: **v1.4.1**. [`metadata/VERSION`](../metadata/VERSION) is authoritative.
+Current stable version: **v2.0.0**. [`metadata/VERSION`](../metadata/VERSION) is authoritative.
 
 ```powershell
 .\.venv\Scripts\python.exe -m compileall -q .

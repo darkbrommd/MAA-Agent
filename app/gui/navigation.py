@@ -54,10 +54,6 @@ class NavigationRail(QFrame):
         layout.addLayout(product_row)
 
         subtitle_row = QHBoxLayout()
-        subtitle = QLabel("2.0 Preview")
-        subtitle.setObjectName("MutedLabel")
-        self._optional_labels.append(subtitle)
-        subtitle_row.addWidget(subtitle)
         subtitle_row.addStretch(1)
         collapse = QPushButton("‹")
         collapse.setFixedWidth(34)

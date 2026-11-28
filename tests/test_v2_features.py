@@ -115,6 +115,12 @@ class GuiFormattingTests(unittest.TestCase):
         self.assertIn("tools\\windows\\setup.ps1", launcher)
         self.assertIn("tools\\windows\\maa_agent_gui_hidden.vbs", launcher)
         self.assertIn("WindowsPowerShell\\v1.0\\powershell.exe", launcher)
+        vbs_launcher = (ROOT / "tools" / "windows" / "maa_agent_gui_hidden.vbs").read_text(encoding="utf-8")
+        self.assertIn("app\\launcher.py", vbs_launcher)
+        python_launcher = (APP_DIR / "launcher.py").read_text(encoding="utf-8")
+        self.assertIn('GUI_V1_FLAG = "--gui-v1"', python_launcher)
+        self.assertLess(python_launcher.index("if PACKAGED_AGENT_FLAG"), python_launcher.index("from gui.main import main"))
+        self.assertTrue((ROOT / "docs" / f"RELEASE_NOTES_v{version}.md").is_file())
         user_readme = ROOT / "Readme（使用前请阅读）.txt"
         self.assertTrue(user_readme.is_file())
         self.assertIn("MAA-Agent.exe", user_readme.read_text(encoding="utf-8"))

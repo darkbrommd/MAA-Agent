@@ -578,7 +578,7 @@ class SettingsPage(QWidget):
         try:
             version = (self.base_dir / "metadata" / "VERSION").read_text(encoding="utf-8").strip()
         except OSError:
-            version = "2.0 Preview"
+            version = "2.0.0"
         card_layout.addWidget(QLabel(f"版本 {version}"))
         description = QLabel("这是正在试用的新界面。")
         description.setWordWrap(True)

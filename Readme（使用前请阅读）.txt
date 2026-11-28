@@ -15,6 +15,8 @@ MAA Agent 是 MAA 的独立配套工具，可以查看计划和运行状态、�
 2. 第一次运行时，在向导中选择包含 MAA.exe 的文件夹。
 3. 完成向导后进入主界面。以后仍然双击 MAA-Agent.exe 即可。
 
+v2.0.0 使用全新的管理界面。若升级后临时需要旧界面，可在命令行运行 MAA-Agent.exe --gui-v1。
+
 MAA-Agent.exe 已包含运行环境，不需要另外安装 Python。
 
 MAA-Agent-GUI.bat 是源码运行和排障备用入口，需要 Python 3.11 或更高版本。普通使用不需要打开它。
