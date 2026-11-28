@@ -959,6 +959,7 @@ class AgentLogicTests(unittest.TestCase):
         with patch.object(agent,"consume_diagnostic_commands",return_value=[command]), \
              patch.object(agent,"bark_force",side_effect=lambda title,body,level="active": sent.append((title,body,level))), \
              patch.object(agent,"add_daily_event"), \
+             patch.object(agent,"log"), \
              patch.object(agent,"save_diagnostic_result") as save_result:
             agent.execute_diagnostic_commands()
         self.assertEqual(len(sent),1)
