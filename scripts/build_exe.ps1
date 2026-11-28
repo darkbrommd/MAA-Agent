@@ -53,6 +53,8 @@ VSVersionInfo(
     --name "MAA-Agent" `
     --icon $iconPath `
     --add-data "$(Join-Path $projectRoot 'assets');assets" `
+    --add-data "$(Join-Path $projectRoot 'app\gui\themes\dark.qss');gui/themes" `
+    --add-data "$(Join-Path $projectRoot 'app\gui\themes\light.qss');gui/themes" `
     --version-file $versionFile `
     --paths (Join-Path $projectRoot "app") `
     --distpath $outputRoot `
@@ -64,5 +66,11 @@ if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed with exit code $LASTEXITCOD
 $exePath = Join-Path $outputRoot "MAA-Agent.exe"
 if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
     throw "PyInstaller did not create $exePath"
+}
+$archiveListing = & $Python -m PyInstaller.utils.cliutils.archive_viewer $exePath -l
+foreach ($requiredTheme in ("dark.qss", "light.qss")) {
+    if (-not ($archiveListing -match [regex]::Escape($requiredTheme))) {
+        throw "Packaged GUI theme is missing: $requiredTheme"
+    }
 }
 Write-Output $exePath
