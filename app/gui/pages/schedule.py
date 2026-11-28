@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 
 from gui.components.date_picker import DatePicker
 from gui.components.dialogs import show_schedule_error
+from gui.components.page_header import HEADER_HEIGHT, PageHeader
 from gui.components.time_picker import TimePicker
 from gui.components.timeline_delegate import TimelineDelegate
 from gui.models.schedule_model import ScheduleModel, schedule_row_key
@@ -126,22 +127,20 @@ class SchedulePage(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(22, 20, 22, 20)
         root.setSpacing(12)
-        title_row = QHBoxLayout()
-        title = QLabel("日程管理")
-        title.setObjectName("PageTitle")
-        title_row.addWidget(title, 0, Qt.AlignmentFlag.AlignBottom)
-        title_row.addStretch(1)
+        header = PageHeader("日程管理")
+        self.header = header
         day_start_label = QLabel("日程每天从")
-        title_row.addWidget(day_start_label, 0, Qt.AlignmentFlag.AlignBottom)
+        header.add_action(day_start_label)
         self.day_start_picker = TimePicker("04:00", add_stretch=False)
-        title_row.addWidget(self.day_start_picker, 0, Qt.AlignmentFlag.AlignBottom)
+        self.day_start_picker.set_control_height(HEADER_HEIGHT)
+        header.add_action(self.day_start_picker)
         start_label = QLabel("开始")
-        title_row.addWidget(start_label, 0, Qt.AlignmentFlag.AlignBottom)
+        header.add_action(start_label)
         self.day_start_apply = QPushButton("应用")
         self.day_start_apply.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.day_start_apply.clicked.connect(self._save_day_start)
-        title_row.addWidget(self.day_start_apply, 0, Qt.AlignmentFlag.AlignBottom)
-        root.addLayout(title_row)
+        header.add_action(self.day_start_apply)
+        root.addWidget(header)
         toolbar = QHBoxLayout()
         previous = QPushButton("‹")
         next_button = QPushButton("›")

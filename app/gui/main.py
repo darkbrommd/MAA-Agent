@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import ctypes
 from pathlib import Path
 
 if __package__ in {None, ""}:
@@ -26,8 +27,18 @@ def project_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _set_windows_app_id() -> None:
+    if sys.platform != "win32":
+        return
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("TaylorYu.MAAAgent")
+    except (AttributeError, OSError):
+        pass
+
+
 def main() -> int:
     os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
+    _set_windows_app_id()
     application = QApplication.instance() or QApplication(sys.argv)
     application.setApplicationName("MAA Agent")
     application.setOrganizationName("Taylor Yu")
@@ -44,6 +55,8 @@ def main() -> int:
             return 0
         application.setStyleSheet("")
     window = MainWindow(base_dir)
+    if not icon.isNull():
+        window.setWindowIcon(icon)
     tray = TrayController(icon, application)
     window.set_tray_controller(tray)
     application.setQuitOnLastWindowClosed(not tray.available)

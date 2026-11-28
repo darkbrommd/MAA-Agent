@@ -33,7 +33,7 @@ class NavigationRail(QFrame):
     page_requested = Signal(str)
     theme_requested = Signal(str)
 
-    def __init__(self, version: str, theme: str = "dark", parent=None):
+    def __init__(self, theme: str = "dark", parent=None):
         super().__init__(parent)
         self.setObjectName("NavigationRail")
         self.setFixedWidth(192)
@@ -104,10 +104,6 @@ class NavigationRail(QFrame):
         self.theme_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.theme_button.clicked.connect(self._toggle_theme)
         layout.addWidget(self.theme_button)
-        version_label = QLabel(f"v{version}")
-        version_label.setObjectName("MutedLabel")
-        self._optional_labels.append(version_label)
-        layout.addWidget(version_label)
         self.set_theme(theme)
 
     def set_current(self, key: str) -> None:

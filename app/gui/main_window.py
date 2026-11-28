@@ -77,12 +77,6 @@ class MainWindow(QMainWindow):
         self.process_timer.start()
         self.process_service.refresh()
 
-    def _version(self) -> str:
-        try:
-            return (self.base_dir / "metadata" / "VERSION").read_text(encoding="utf-8").strip()
-        except OSError:
-            return "2.0-preview"
-
     def _build_ui(self) -> None:
         root = QWidget()
         root.setObjectName("AppRoot")
@@ -90,7 +84,7 @@ class MainWindow(QMainWindow):
         shell = QHBoxLayout(root)
         shell.setContentsMargins(0, 0, 0, 0)
         shell.setSpacing(0)
-        self.navigation = NavigationRail(self._version(), self._theme)
+        self.navigation = NavigationRail(self._theme)
         self.navigation.page_requested.connect(self.show_page)
         self.navigation.theme_requested.connect(self.app_state.set_theme)
         shell.addWidget(self.navigation)

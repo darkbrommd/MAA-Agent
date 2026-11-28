@@ -22,12 +22,13 @@ if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
 from PySide6.QtCore import QCoreApplication, QEventLoop, QObject, QPoint, QPointF, QRect, QRectF, QThreadPool, Qt, Signal
-from PySide6.QtGui import QImage, QPainter, QWheelEvent
-from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton
+from PySide6.QtGui import QIcon, QImage, QPainter, QWheelEvent
+from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QWidget
 
 from gui.components.resource_chart import ResourceChart
 from gui.components.date_picker import DatePicker
 from gui.components.dialogs import ResourceDetailDialog, ScheduleErrorDialog
+from gui.components.page_header import HEADER_HEIGHT
 from gui.components.responsive_layout import responsive_card_rect
 from gui.components.timeline_delegate import TimelineDelegate, compute_card_layout, compute_day_navigation_layout
 from gui.components.toggle_switch import ToggleSwitch
@@ -56,6 +57,7 @@ from gui.services.schedule_service import (
     schedule_run_records,
 )
 from gui.pages.settings.page import DIAGNOSTIC_CASES
+from notification_samples import SAMPLES_BY_LABEL
 from gui.state.refresh_manager import RefreshManager
 from gui.state.app_state import AppState
 from gui.themes.tokens import DARK, LIGHT, load_stylesheet
@@ -130,6 +132,11 @@ class GuiV2Tests(unittest.TestCase):
             self.assertNotIn("QWidget {\n    background:", stylesheet)
             self.assertNotIn("{background}", stylesheet)
         self.assertTrue(resource_path("assets", "icons", "calendar.svg").is_file())
+
+    def test_application_icon_exposes_native_windows_sizes(self):
+        icon = QIcon(str(ROOT / "assets" / "app_icon.ico"))
+        sizes = {(size.width(), size.height()) for size in icon.availableSizes()}
+        self.assertTrue({(16, 16), (24, 24), (32, 32), (48, 48), (256, 256)}.issubset(sizes))
 
     def test_gui_resource_path_prefers_onefile_bundle(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -272,6 +279,9 @@ class GuiV2Tests(unittest.TestCase):
                 self.assertNotIn(forbidden, visible_copy)
             self.assertIn("测试以上功能是否正常运行并发送通知。", visible_copy)
             self.assertIn("测试以上功能", visible_copy)
+            self.assertIn("代理连接异常时提醒我", visible_copy)
+            self.assertNotIn("网络检查失败", visible_copy)
+            self.assertTrue(any(label.text() == "版本 2.0.0" for label in page.findChildren(QLabel)))
             first_news_row = page._news_time_rows[0][0]
             page._remove_news_time(first_news_row)
             page._add_news_time("06:30")
@@ -288,6 +298,8 @@ class GuiV2Tests(unittest.TestCase):
             self.assertFalse(page.preview_buttons["MAA2 未运行"].isHidden())
             page._show_preview("内存不足")
             self.assertEqual(DIAGNOSTIC_CASES[page._selected_preview], ("memory", ""))
+            memory_sample = SAMPLES_BY_LABEL["内存不足"]
+            self.assertEqual(page.preview_text.toPlainText(), f"{memory_sample.title}\n\n{memory_sample.body}")
             with patch("gui.pages.settings.page.QMessageBox.question", return_value=QMessageBox.StandardButton.Yes), \
                     patch("gui.pages.settings.page.diagnostic_commands.enqueue", return_value="test-id") as enqueue:
                 page._enqueue_real_test()
@@ -1003,10 +1015,20 @@ class GuiV2Tests(unittest.TestCase):
             process_events(80)
             schedule_title = next(label for label in schedule.findChildren(QLabel) if label.objectName() == "PageTitle")
             self.assertAlmostEqual(schedule_title.geometry().bottom(), schedule.day_start_apply.geometry().bottom(), delta=2)
+            schedule_header_children = schedule.header.findChildren(
+                QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly
+            )
+            self.assertTrue(schedule_header_children)
+            self.assertEqual({widget.height() for widget in schedule_header_children}, {HEADER_HEIGHT})
+            self.assertEqual(
+                {widget.geometry().center().y() for widget in schedule_header_children},
+                {(HEADER_HEIGHT - 1) // 2},
+            )
             self.assertGreater(
                 window.navigation.collapse_button.geometry().top(),
                 window.navigation.product.geometry().bottom(),
             )
+            self.assertFalse(any(label.text().startswith("v2.0") for label in window.navigation.findChildren(QLabel)))
             window.navigation._toggle_collapsed()
             self.assertEqual(window.navigation.width(), 68)
             window.navigation._toggle_collapsed()
@@ -1016,6 +1038,8 @@ class GuiV2Tests(unittest.TestCase):
             resource_title = next(label for label in resources.findChildren(QLabel) if label.objectName() == "PageTitle")
             resource_history = next(button for button in resources.findChildren(QPushButton) if button.text() == "历史趋势")
             self.assertAlmostEqual(resource_title.geometry().bottom(), resource_history.geometry().bottom(), delta=2)
+            self.assertEqual(resource_title.height(), HEADER_HEIGHT)
+            self.assertEqual(resource_history.height(), HEADER_HEIGHT)
             self.assertEqual(schedule.list_view.horizontalScrollBarPolicy(), Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             self.assertEqual(resources.anomalies.horizontalScrollBarPolicy(), Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             self.assertEqual(resources.history_splitter.count(), 2)
@@ -1044,6 +1068,8 @@ class GuiV2Tests(unittest.TestCase):
             news_title = next(label for label in news_page.findChildren(QLabel) if label.objectName() == "PageTitle")
             news_refresh = next(button for button in news_page.findChildren(QPushButton) if button.text() == "检查新公告")
             self.assertAlmostEqual(news_title.geometry().bottom(), news_refresh.geometry().bottom(), delta=2)
+            self.assertEqual(news_title.height(), HEADER_HEIGHT)
+            self.assertEqual(news_refresh.height(), HEADER_HEIGHT)
             self.assertTrue(window.status_bar.isHidden())
             window.show_page("logs")
             self.assertIsInstance(window._pages["dashboard"], DashboardPage)

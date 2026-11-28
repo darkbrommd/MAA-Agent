@@ -20,6 +20,7 @@ from agent_runtime import (
 )
 from schedule_utils import effective_occurrences, load_overrides, occurrence_key, read_maa_timer_schedule
 from diagnostic_commands import consume as consume_diagnostic_commands, save_result as save_diagnostic_result
+from notification_samples import general_samples, sample_for_case
 from news_monitor import poll as poll_news
 from resource_history import sample as sample_resource_history
 from resource_whitelist import normalize_resource_whitelist, process_matches as whitelist_process_matches
@@ -1333,9 +1334,13 @@ def check_processes():
         is_drill=all(x[2] for x in alerts)
         title=(f"{labels[0]} 已退出" if len(labels)==1 else "多个 MAA 已退出")
         if is_drill:
-            title=(f"【测试】{labels[0]} 未运行" if len(labels)==1 else "【测试】多个 MAA 未运行")
-            body=(f"这是测试通知。\n\n发生了什么：没有找到 {'、'.join(labels)}。\n"
-                  "你要做什么：确认程序是否已经打开。")
+            if len(labels) == 1:
+                sample = sample_for_case("maa_missing", labels[0])
+                title, body = sample.title, sample.body
+            else:
+                title="【测试】多个 MAA 未运行"
+                body=(f"发生了什么：没有找到 {'、'.join(labels)}。\n"
+                      "你要做什么：确认程序是否已经打开。")
         else:
             body=(f"发生了什么：当前没有检测到 {'、'.join(labels)} 的 MAA 进程。\n"
                   "大概率原因：对应 MAA 被关掉、崩溃，或没有被启动脚本拉起。\n"
@@ -2622,16 +2627,6 @@ def send_external_heartbeat_if_due():
 
 
 def execute_diagnostic_commands():
-    templates={
-        "bark_transport": ("【测试】Bark 通知","如果你收到了这条消息，说明 Bark 和手机通知可以正常使用。","active"),
-        "memory": ("【测试】内存不足","发生了什么：系统内存持续吃紧。\n你要做什么：如果不是主动运行重负载程序，请检查异常占用。","timeSensitive"),
-        "disk": ("【测试】磁盘空间不足","发生了什么：磁盘剩余空间已经很少。\n你要做什么：清理不再需要的文件。","timeSensitive"),
-        "proxy": ("【测试】网络检查失败","发生了什么：连续多次无法完成网络检查。\n你要做什么：确认当前网络是否正常。","timeSensitive"),
-        "hung": ("【测试】窗口未响应","发生了什么：MAA 或 MuMu 窗口持续未响应。\n你要做什么：确认对应程序是否卡住。","critical"),
-        "schedule": ("【测试】任务未按时开始","发生了什么：计划到了时间仍没有开始。\n你要做什么：检查 MAA、MuMu 和定时任务状态。","timeSensitive"),
-        "agent_error": ("【测试】MAA Agent 出错","发生了什么：MAA Agent 没有正常完成本轮检查。\n你要做什么：打开日志中心查看最近记录。","critical"),
-        "news": ("【测试】官网维护","发生了什么：官网发布了新的维护公告。\n你要做什么：打开公告中心查看详细内容。","timeSensitive"),
-    }
     for command in consume_diagnostic_commands(BASE_DIR):
         try:
             kind=str(command.get("kind"))
@@ -2649,17 +2644,17 @@ def execute_diagnostic_commands():
                 check_processes()
                 message="测试通知已发送。"
             elif kind == "all":
-                for key,(title,body,level) in templates.items():
-                    if key != "bark_transport":
-                        bark_force(title,body,level=level)
-                message="测试通知已发送。"
-            elif kind in templates:
-                title,body,level=templates[kind]
-                bark_force(title,body,level=level)
-                add_daily_event("diagnostic","通知功能已测试",severity="info")
+                for sample in general_samples():
+                    bark_force(sample.title, sample.body, level=sample.level)
                 message="测试通知已发送。"
             else:
-                raise ValueError(f"未知测试类型：{kind}")
+                try:
+                    sample = sample_for_case(kind, target)
+                except KeyError as exc:
+                    raise ValueError(f"未知测试类型：{kind}") from exc
+                bark_force(sample.title, sample.body, level=sample.level)
+                add_daily_event("diagnostic","通知功能已测试",severity="info")
+                message="测试通知已发送。"
             save_diagnostic_result(BASE_DIR,command,True,message)
             log(f"Diagnostic completed: {kind} {target} - {message}")
         except Exception as exc:

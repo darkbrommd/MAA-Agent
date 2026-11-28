@@ -748,11 +748,12 @@ class ManagerApp:
 
     def _apply_window_icon(self):
         try:
+            if os.name == "nt" and ICON_ICO.exists():
+                self.root.iconbitmap(default=str(ICON_ICO))
+                return
             if ICON_PNG.exists():
                 self._icon_image = tk.PhotoImage(file=str(ICON_PNG))
                 self.root.iconphoto(True, self._icon_image)
-            if os.name == "nt" and ICON_ICO.exists():
-                self.root.iconbitmap(default=str(ICON_ICO))
         except tk.TclError:
             pass
 
@@ -1280,7 +1281,7 @@ class ManagerApp:
         for index,label in enumerate(configured_maa_labels(self.cfg)):
             ttk.Button(real,text=f"测试 {label} 未运行提醒",command=lambda x=label:self.run_diagnostic("maa_missing",x)).pack(side="left",padx=(0 if index == 0 else 8,8))
         previews=ttk.LabelFrame(self.diagnostics_tab,text="其他提醒测试",padding=12); previews.pack(fill="x",pady=(12,0))
-        for idx,(label,kind) in enumerate((("Bark 通知","bark_transport"),("内存不足","memory"),("磁盘空间不足","disk"),("网络检查失败","proxy"),("窗口未响应","hung"),("任务未按时开始","schedule"),("Agent 出错","agent_error"),("官网维护","news"))):
+        for idx,(label,kind) in enumerate((("Bark 通知","bark_transport"),("内存不足","memory"),("磁盘空间不足","disk"),("代理连接异常","proxy"),("窗口未响应","hung"),("任务未按时开始","schedule"),("Agent 出错","agent_error"),("官网维护","news"))):
             ttk.Button(previews,text=label,command=lambda x=kind:self.run_diagnostic(x),width=15).grid(row=idx//4,column=idx%4,padx=5,pady=5,sticky="ew")
         ttk.Button(previews,text="依次测试全部提醒",command=self.run_all_diagnostics).grid(row=2,column=0,columnspan=4,padx=5,pady=(12,5),sticky="ew")
         self.diagnostic_status_var=tk.StringVar(value="尚未执行测试。")
@@ -1297,7 +1298,7 @@ class ManagerApp:
         ttk.Entry(report, textvariable=self.daily_time_var, width=9).grid(row=0, column=2, sticky="w", padx=(6, 18))
         self.ai_daily_field=self._toggle_field(report, "有价值时调用 AI", self.ai_daily_var)
         self.ai_daily_field.grid(row=0, column=3, sticky="ew")
-        self._toggle_field(report, "启用系统代理健康检查", self.proxy_check_var).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        self._toggle_field(report, "代理连接异常时提醒我", self.proxy_check_var).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
 
         grid = ttk.LabelFrame(self.timing_tab, text="判断与采样时间", padding=12)
         grid.pack(fill="x", pady=(12, 0))

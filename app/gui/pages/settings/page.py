@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 import diagnostic_commands
+from notification_samples import SAMPLES, SAMPLES_BY_LABEL
 from gui.components.toggle_switch import ToggleSwitch
 from gui.components.time_picker import NoWheelComboBox, TimePicker
 from gui.services.config_service import ConfigService
@@ -51,37 +52,15 @@ TIMING_FIELDS = (
     ("连接异常持续多久后提醒（分钟）", "connection_error_stall_minutes", "int"),
     ("计划到点后等待多久（分钟）", "scheduled_run_grace_minutes", "int"),
     ("窗口卡住多久后提醒（分钟）", "hung_window_sustain_minutes", "int"),
-    ("每隔多久检查网络（分钟）", "proxy_healthcheck_interval_minutes", "int"),
-    ("网络异常多久后提醒（分钟）", "proxy_failure_sustain_minutes", "int"),
+    ("每隔多久检查代理连接（分钟）", "proxy_healthcheck_interval_minutes", "int"),
+    ("代理连接异常多久后提醒（分钟）", "proxy_failure_sustain_minutes", "int"),
     ("在线状态上报间隔（分钟）", "heartbeat_interval_minutes", "int"),
 )
 
-LOCAL_PREVIEWS = {
-    "MAA1 未运行": "发生了什么：没有找到 MAA1。\n你要做什么：确认程序是否已经打开。",
-    "MAA2 未运行": "发生了什么：没有找到 MAA2。\n你要做什么：确认第二个 MAA 是否已经打开。",
-    "Bark 通知": "如果你收到了这条消息，说明 Bark 和手机通知可以正常使用。",
-    "内存不足": "发生了什么：系统内存持续吃紧，当前 96%，可用 1.2 GB。\n你要做什么：如果不是主动运行重负载程序，请检查异常占用。",
-    "磁盘空间不足": "发生了什么：磁盘剩余空间已经很少。\n你要做什么：清理不再需要的文件。",
-    "网络检查失败": "发生了什么：连续多次无法完成网络检查。\n你要做什么：确认当前网络是否正常。",
-    "任务未按时开始": "发生了什么：MAA1 16:00 的计划到了时间仍没有开始。\n你要做什么：检查 MAA、MuMu 和定时任务状态。",
-    "窗口未响应": "发生了什么：MAA/MuMu 窗口持续未响应。\n你要做什么：远程确认对应程序是否卡住。",
-    "Agent 出错": "发生了什么：MAA Agent 没有正常完成本轮检查。\n你要做什么：打开日志中心查看最近记录。",
-    "官网维护": "这是通知样例：检测到新的停机维护公告。",
-}
+LOCAL_PREVIEWS = {sample.label: sample.body for sample in SAMPLES}
 
 TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
-DIAGNOSTIC_CASES = {
-    "MAA1 未运行": ("maa_missing", "MAA1"),
-    "MAA2 未运行": ("maa_missing", "MAA2"),
-    "Bark 通知": ("bark_transport", ""),
-    "内存不足": ("memory", ""),
-    "磁盘空间不足": ("disk", ""),
-    "网络检查失败": ("proxy", ""),
-    "任务未按时开始": ("schedule", ""),
-    "窗口未响应": ("hung", ""),
-    "Agent 出错": ("agent_error", ""),
-    "官网维护": ("news", ""),
-}
+DIAGNOSTIC_CASES = {sample.label: (sample.kind, sample.target) for sample in SAMPLES}
 FIELD_DEFAULTS = {
     "bark_server": "https://api.day.app",
     "bark_retry_attempts": 3,
@@ -497,8 +476,8 @@ class SettingsPage(QWidget):
         self._add_spin(form, "情况没变化时每隔多久记录（分钟）", "resource_sample_abnormal_steady_minutes")
         memory_layout.addLayout(form)
         layout.addWidget(memory)
-        proxy, proxy_layout = self._card("网络与公告")
-        self._add_toggle(proxy_layout, "网络异常时提醒我", "enable_proxy_healthcheck", "定时确认代理和外网能否正常使用。")
+        proxy, proxy_layout = self._card("代理与公告")
+        self._add_toggle(proxy_layout, "代理连接异常时提醒我", "enable_proxy_healthcheck", "定时确认 Windows 系统代理能否访问外部网站。")
         self._add_toggle(proxy_layout, "有新的维护公告时提醒我", "enable_news_monitor")
         times_header = QHBoxLayout()
         times_header.addWidget(QLabel("每天检查时间"))
@@ -542,8 +521,8 @@ class SettingsPage(QWidget):
 
     def _build_timing(self) -> QWidget:
         page, layout = self._section("高级设置", "通常不用改。需要调整检查频率或日报时间时再来这里。")
-        proxy, proxy_layout = self._card("日报与网络")
-        self._add_toggle(proxy_layout, "网络异常时提醒我", "enable_proxy_healthcheck")
+        proxy, proxy_layout = self._card("日报与代理")
+        self._add_toggle(proxy_layout, "代理连接异常时提醒我", "enable_proxy_healthcheck")
         self._add_toggle(proxy_layout, "启用每日报告", "enable_daily_report")
         form = QFormLayout()
         self._add_time(form, "日报时间", "daily_report_time", "23:50")
@@ -825,7 +804,8 @@ class SettingsPage(QWidget):
 
     def _show_preview(self, name: str) -> None:
         self._selected_preview = name
-        self.preview_text.setPlainText(f"【通知样例】{name}\n\n{LOCAL_PREVIEWS[name]}")
+        sample = SAMPLES_BY_LABEL[name]
+        self.preview_text.setPlainText(f"{sample.title}\n\n{sample.body}")
 
     def _enqueue_real_test(self) -> None:
         selected = self._selected_preview

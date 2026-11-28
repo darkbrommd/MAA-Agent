@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui.models.news_model import NewsModel
+from gui.components.page_header import PageHeader
 from gui.services.news_service import NewsService, NewsSnapshot
 
 
@@ -95,20 +96,17 @@ class NewsPage(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 22, 24, 24)
         root.setSpacing(12)
-        header = QHBoxLayout()
-        title = QLabel("公告中心")
-        title.setObjectName("PageTitle")
-        header.addWidget(title, 0, Qt.AlignmentFlag.AlignBottom)
-        header.addStretch(1)
+        header = PageHeader("公告中心")
+        self.header = header
         self.incremental = QPushButton("检查新公告")
         self.incremental.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.incremental.clicked.connect(self._refresh_incremental)
         self.full = QPushButton("重新获取全部")
         self.full.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.full.clicked.connect(self._refresh_full)
-        header.addWidget(self.incremental, 0, Qt.AlignmentFlag.AlignBottom)
-        header.addWidget(self.full, 0, Qt.AlignmentFlag.AlignBottom)
-        root.addLayout(header)
+        header.add_action(self.incremental)
+        header.add_action(self.full)
+        root.addWidget(header)
         self.status = QLabel("正在载入公告…")
         self.status.setObjectName("MutedLabel")
         root.addWidget(self.status)

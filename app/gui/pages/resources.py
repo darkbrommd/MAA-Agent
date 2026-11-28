@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 
 from gui.components.resource_chart import ResourceChart
 from gui.components.date_picker import DatePicker
+from gui.components.page_header import PageHeader
 from gui.components.responsive_layout import responsive_card_rect
 from gui.components.dialogs import show_resource_detail
 from gui.models.resource_model import ResourceModel
@@ -156,11 +157,8 @@ class ResourcesPage(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(22, 20, 22, 20)
         root.setSpacing(12)
-        header = QHBoxLayout()
-        title = QLabel("资源监控")
-        title.setObjectName("PageTitle")
-        header.addWidget(title, 0, Qt.AlignmentFlag.AlignBottom)
-        header.addStretch(1)
+        header = PageHeader("资源监控")
+        self.header = header
         segments = QButtonGroup(self)
         segments.setExclusive(True)
         history_button = QPushButton("历史趋势")
@@ -169,10 +167,10 @@ class ResourcesPage(QWidget):
             button.setCheckable(True)
             button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             segments.addButton(button, index)
-            header.addWidget(button, 0, Qt.AlignmentFlag.AlignBottom)
+            header.add_action(button)
         history_button.setChecked(True)
         segments.idClicked.connect(self._switch_segment)
-        root.addLayout(header)
+        root.addWidget(header)
         self.stack = QStackedWidget()
         root.addWidget(self.stack, 1)
         history = QWidget()

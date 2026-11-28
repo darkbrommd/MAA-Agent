@@ -18,6 +18,7 @@ if str(APP_DIR) not in sys.path:
 import schedule_utils
 import agent
 import agent_runtime
+from notification_samples import SAMPLES_BY_LABEL
 
 
 def timer_root(timers):
@@ -31,7 +32,7 @@ def isolated_agent(extra_cfg=None):
         "PID_FILE", "STOP_FILE", "BARK_QUEUE_FILE", "DAILY_REPORT_SKIP_FILE", "DAILY_REPORT_SENT_FILE",
         "RESOURCE_PRESSURE_FILE", "PROCESS_HEALTH_FILE", "HEARTBEAT_STATE_FILE",
         "NETWORK_HEALTH_FILE", "HUNG_STATE_FILE", "SCHEDULE_CACHE_FILE",
-        "SCHEDULE_RUN_STATE_FILE", "GENERIC_ISSUE_DIR", "cfg",
+        "SCHEDULE_RUN_STATE_FILE", "DEBUG_OVERRIDE_FILE", "GENERIC_ISSUE_DIR", "cfg",
     ]
     old = {k: getattr(agent, k) for k in attrs}
     with tempfile.TemporaryDirectory() as td:
@@ -60,6 +61,7 @@ def isolated_agent(extra_cfg=None):
         agent.HUNG_STATE_FILE = state / "hung_windows.json"
         agent.SCHEDULE_CACHE_FILE = state / "schedule_cache.json"
         agent.SCHEDULE_RUN_STATE_FILE = state / "schedule_run_status.json"
+        agent.DEBUG_OVERRIDE_FILE = state / "debug_overrides.json"
         agent.GENERIC_ISSUE_DIR = issues
         c = copy.deepcopy(old["cfg"])
         c.update({
@@ -964,11 +966,29 @@ class AgentLogicTests(unittest.TestCase):
             agent.execute_diagnostic_commands()
         self.assertEqual(len(sent),1)
         title,body,_level=sent[0]
-        self.assertEqual(title,"【测试】内存不足")
-        self.assertIn("发生了什么",body)
+        sample=SAMPLES_BY_LABEL["内存不足"]
+        self.assertEqual((title,body),(sample.title,sample.body))
         for forbidden in ("演习","模拟信号","真实运行时","链路","探针","PID","证据来源"):
             self.assertNotIn(forbidden,title+body)
         self.assertEqual(save_result.call_args.args[3],"测试通知已发送。")
+
+    def test_maa_missing_test_uses_the_same_copy_as_preview(self):
+        sample=SAMPLES_BY_LABEL["MAA1 未运行"]
+        sent=[]
+        with isolated_agent({"maa_instance_dirs":{"MAA1":"D:/MAA/one"}}), \
+             patch.object(agent,"find_processes",return_value=[]), \
+             patch.object(agent,"detect_maa_instance_processes",return_value=({"MAA1":[]},[])), \
+             patch.object(agent,"bark_force",side_effect=lambda title,body,level="active": sent.append((title,body,level))), \
+             patch.object(agent,"add_daily_event"), \
+             patch.object(agent,"save_process_health_state"), \
+             patch.object(agent,"resolve_incident",return_value=False):
+            agent.DEBUG_OVERRIDE_FILE.write_text(
+                json.dumps({"forced_missing":["MAA1"],"until":time.time()+60}), encoding="utf-8"
+            )
+            state={"missing":{"instance:MAA1":{"since":time.time()-600,"alerted":False,"diagnostic":True}}}
+            with patch.object(agent,"load_process_health_state",return_value=state):
+                agent.check_processes()
+        self.assertEqual(sent[0][:2],(sample.title,sample.body))
 
 
 if __name__ == "__main__":

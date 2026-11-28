@@ -20,6 +20,10 @@ $versionTuple = "$($Matches[1]), $($Matches[2]), $($Matches[3]), 0"
 $outputRoot = Join-Path $projectRoot $OutputDirectory
 $workRoot = Join-Path $projectRoot "dist\pyinstaller-work"
 $versionFile = Join-Path $workRoot "version_info.txt"
+$iconPath = Join-Path $projectRoot "assets\app_icon.ico"
+
+& $Python -c "from PIL import Image; p=r'$iconPath'; sizes=Image.open(p).info.get('sizes', set()); required={(16,16),(24,24),(32,32),(48,48),(256,256)}; missing=required-set(sizes); assert not missing, f'ICO is missing native sizes: {sorted(missing)}'"
+if ($LASTEXITCODE -ne 0) { throw "Application icon validation failed" }
 
 if (Test-Path -LiteralPath $outputRoot) { Remove-Item -LiteralPath $outputRoot -Recurse -Force }
 if (Test-Path -LiteralPath $workRoot) { Remove-Item -LiteralPath $workRoot -Recurse -Force }
@@ -47,7 +51,7 @@ VSVersionInfo(
     --onefile `
     --windowed `
     --name "MAA-Agent" `
-    --icon (Join-Path $projectRoot "assets\app_icon.ico") `
+    --icon $iconPath `
     --add-data "$(Join-Path $projectRoot 'assets');assets" `
     --version-file $versionFile `
     --paths (Join-Path $projectRoot "app") `
