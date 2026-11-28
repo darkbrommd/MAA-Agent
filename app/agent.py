@@ -1332,17 +1332,20 @@ def check_processes():
         labels=[x[0] for x in alerts]
         is_drill=all(x[2] for x in alerts)
         title=(f"{labels[0]} 已退出" if len(labels)==1 else "多个 MAA 已退出")
-        if is_drill: title="【演习】"+title
-        body=(("这是由管理器触发的报警演习，下面仍使用真实的缺失检测和 Bark 通道。\n" if is_drill else "")+
-              f"发生了什么：当前没有检测到 {'、'.join(labels)} 的 MAA 进程。\n"
-              "大概率原因：对应 MAA 被关掉、崩溃，或没有被启动脚本拉起。\n"
-              "你要做什么：如果不是你主动关闭的，现在值得远程看一眼。")
+        if is_drill:
+            title=(f"【测试】{labels[0]} 未运行" if len(labels)==1 else "【测试】多个 MAA 未运行")
+            body=(f"这是测试通知。\n\n发生了什么：没有找到 {'、'.join(labels)}。\n"
+                  "你要做什么：确认程序是否已经打开。")
+        else:
+            body=(f"发生了什么：当前没有检测到 {'、'.join(labels)} 的 MAA 进程。\n"
+                  "大概率原因：对应 MAA 被关掉、崩溃，或没有被启动脚本拉起。\n"
+                  "你要做什么：如果不是你主动关闭的，现在值得远程看一眼。")
         if not is_drill:
             for label,_,_ in alerts:
                 add_incident("process_missing",f"{label} MAA 进程缺失",label=label,likely="MAA 退出/崩溃或未启动",action="远程检查",key=f"process|{label}")
             add_daily_alert(f"MAA 进程缺失：{'、'.join(labels)}",severity="critical")
         else:
-            add_daily_event("diagnostic",f"真实检测链路演习：{'、'.join(labels)} 缺失",severity="info")
+            add_daily_event("diagnostic",f"已测试：{'、'.join(labels)} 未运行提醒",severity="info")
         if is_drill:
             bark_force(title, body, level="timeSensitive")
         else:
@@ -2620,14 +2623,14 @@ def send_external_heartbeat_if_due():
 
 def execute_diagnostic_commands():
     templates={
-        "bark_transport": ("【演习】Bark 通道测试","这是一条由管理器触发的通道测试。收到它说明 Bark 网络、密钥和手机通知链路可用。","active"),
-        "memory": ("【演习】系统内存持续吃紧","模拟信号：系统内存达到报警条件。真实运行时这里会附带占用率、已用/可用内存与内存大户。","timeSensitive"),
-        "disk": ("【演习】磁盘空间很低","模拟信号：监控磁盘达到剩余空间阈值。真实运行时这里会给出盘符和剩余容量。","timeSensitive"),
-        "proxy": ("【演习】代理/外网出口异常","模拟信号：外网探针持续失败。真实运行时会包含代理模式、持续时间和错误摘要。","timeSensitive"),
-        "hung": ("【演习】MAA/MuMu 持续未响应","模拟信号：窗口持续未响应。真实运行时会包含窗口标题、PID 与持续时间。","critical"),
-        "schedule": ("【演习】计划任务可能没跑","模拟信号：计划在宽限期后仍无启动证据。真实运行时会包含实例、计划时间与证据来源。","timeSensitive"),
-        "agent_error": ("【演习】MAA Agent 自身异常","模拟信号：Agent 主循环发生异常但仍会继续监控。","critical"),
-        "news": ("【演习】官网维护公告","模拟信号：检测到一条新的闪断更新/停机维护公告；真实运行时会附带窗口、原文链接和日程操作。","timeSensitive"),
+        "bark_transport": ("【测试】Bark 通知","如果你收到了这条消息，说明 Bark 和手机通知可以正常使用。","active"),
+        "memory": ("【测试】内存不足","发生了什么：系统内存持续吃紧。\n你要做什么：如果不是主动运行重负载程序，请检查异常占用。","timeSensitive"),
+        "disk": ("【测试】磁盘空间不足","发生了什么：磁盘剩余空间已经很少。\n你要做什么：清理不再需要的文件。","timeSensitive"),
+        "proxy": ("【测试】网络检查失败","发生了什么：连续多次无法完成网络检查。\n你要做什么：确认当前网络是否正常。","timeSensitive"),
+        "hung": ("【测试】窗口未响应","发生了什么：MAA 或 MuMu 窗口持续未响应。\n你要做什么：确认对应程序是否卡住。","critical"),
+        "schedule": ("【测试】任务未按时开始","发生了什么：计划到了时间仍没有开始。\n你要做什么：检查 MAA、MuMu 和定时任务状态。","timeSensitive"),
+        "agent_error": ("【测试】MAA Agent 出错","发生了什么：MAA Agent 没有正常完成本轮检查。\n你要做什么：打开日志中心查看最近记录。","critical"),
+        "news": ("【测试】官网维护","发生了什么：官网发布了新的维护公告。\n你要做什么：打开公告中心查看详细内容。","timeSensitive"),
     }
     for command in consume_diagnostic_commands(BASE_DIR):
         try:
@@ -2644,19 +2647,19 @@ def execute_diagnostic_commands():
                 save_process_health_state(state)
                 DEBUG_OVERRIDE_FILE.write_text(json.dumps({"forced_missing":[target],"until":time.time()+max(90,float(cfg.get("check_interval_seconds",60))*2+10)},ensure_ascii=False),encoding="utf-8")
                 check_processes()
-                message=f"已把 {target} 演习信号送入真实进程检测器并立即执行报警链路。"
+                message="测试通知已发送。"
             elif kind == "all":
                 for key,(title,body,level) in templates.items():
                     if key != "bark_transport":
                         bark_force(title,body,level=level)
-                message="已依次发送所有非破坏性通知演习。"
+                message="测试通知已发送。"
             elif kind in templates:
                 title,body,level=templates[kind]
                 bark_force(title,body,level=level)
-                add_daily_event("diagnostic",f"通知演习：{kind}",severity="info")
-                message=f"已通过正式 Bark 发送路径执行 {kind} 演习。"
+                add_daily_event("diagnostic","通知功能已测试",severity="info")
+                message="测试通知已发送。"
             else:
-                raise ValueError(f"未知演习类型：{kind}")
+                raise ValueError(f"未知测试类型：{kind}")
             save_diagnostic_result(BASE_DIR,command,True,message)
             log(f"Diagnostic completed: {kind} {target} - {message}")
         except Exception as exc:

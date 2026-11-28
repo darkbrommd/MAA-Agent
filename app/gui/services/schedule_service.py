@@ -142,6 +142,20 @@ def decorate_schedule_rows(
     return tuple(output)
 
 
+def mark_schedule_run_day(rows, selected_day: date) -> tuple[dict, ...]:
+    """Show one heading for the selected run day, even when it crosses midnight."""
+    output: list[dict] = []
+    for index, item in enumerate(rows):
+        row = dict(item)
+        row["show_date_header"] = index == 0
+        if index == 0:
+            row["header_day"] = selected_day
+        else:
+            row.pop("header_day", None)
+        output.append(row)
+    return tuple(output)
+
+
 class _ScheduleSignals(QObject):
     done = Signal(int, object)
     failed = Signal(int, str)
@@ -195,6 +209,8 @@ class _ScheduleWorker(QRunnable):
                 datetime.now(),
                 float(cfg.get("scheduled_run_grace_minutes", 15) or 15),
             )
+            if selected_day is not None:
+                decorated = mark_schedule_run_day(decorated, selected_day)
             aliases = {str(key): str(value).strip() for key, value in (cfg.get("maa_instance_aliases") or {}).items()}
             for row in decorated:
                 label = str(row.get("label") or "")

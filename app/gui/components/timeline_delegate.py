@@ -212,8 +212,9 @@ class TimelineDelegate(QStyledItemDelegate):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         if item.get("show_date_header"):
             when = item.get("datetime")
-            day_text = f"{when.year:04d}年{when.month:02d}月{when.day:02d}日" if when else "日期"
-            weekday = "一二三四五六日"[when.weekday()] if when else ""
+            header_day = item.get("header_day") or (when.date() if when else None)
+            day_text = f"{header_day.year:04d}年{header_day.month:02d}月{header_day.day:02d}日" if header_day else "日期"
+            weekday = "一二三四五六日"[header_day.weekday()] if header_day else ""
             header = QRectF(option.rect).adjusted(12, 1, -12, -option.rect.height() + 29)
             painter.setPen(QColor(tokens.text))
             text = f"{day_text} · 星期{weekday}"

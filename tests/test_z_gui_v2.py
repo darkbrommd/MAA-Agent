@@ -49,6 +49,7 @@ from gui.services.news_service import NewsSnapshot
 from gui.services.process_service import _build_snapshot
 from gui.services.schedule_service import (
     decorate_schedule_rows,
+    mark_schedule_run_day,
     occurrence_key,
     schedule_current_day,
     schedule_day_bounds,
@@ -264,8 +265,13 @@ class GuiV2Tests(unittest.TestCase):
                 + [widget.text() for widget in page.findChildren(QPushButton)]
                 + section_names
             )
-            for forbidden in ("config.json", "全部配置", "代理健康检查", "监督预期", "下一轮读取", "MAA 实例"):
+            for forbidden in (
+                "config.json", "全部配置", "代理健康检查", "监督预期", "下一轮读取", "MAA 实例",
+                "提交测试", "演习信号", "真实进程检测器", "报警链路",
+            ):
                 self.assertNotIn(forbidden, visible_copy)
+            self.assertIn("测试以上功能是否正常运行并发送通知。", visible_copy)
+            self.assertIn("测试以上功能", visible_copy)
             first_news_row = page._news_time_rows[0][0]
             page._remove_news_time(first_news_row)
             page._add_news_time("06:30")
@@ -286,6 +292,19 @@ class GuiV2Tests(unittest.TestCase):
                     patch("gui.pages.settings.page.diagnostic_commands.enqueue", return_value="test-id") as enqueue:
                 page._enqueue_real_test()
             enqueue.assert_called_once_with(base_dir, "memory", "")
+            self.assertEqual(page.diagnostic_status.text(), "正在测试“内存不足”…")
+            (base_dir / "state" / "diagnostic_last_result.json").write_text(
+                json.dumps({
+                    "id": "test-id",
+                    "kind": "memory",
+                    "ok": True,
+                    "message": "已把演习信号送入真实进程检测器并执行报警链路。",
+                }),
+                encoding="utf-8",
+            )
+            page._poll_diagnostic_result()
+            self.assertEqual(page.diagnostic_status.text(), "“内存不足”已测试，请检查手机是否收到通知。")
+            self.assertNotIn("报警链路", page.diagnostic_status.text())
             page._diagnostic_timer.stop()
             window._allow_close = True
             window.process_timer.stop()
@@ -451,6 +470,18 @@ class GuiV2Tests(unittest.TestCase):
         self.assertEqual(midnight, datetime(2026, 11, 27, 0, 0))
         self.assertEqual(schedule_current_day(datetime(2026, 11, 27, 3, 59), {}), date(2026, 11, 26))
         self.assertEqual(schedule_current_day(datetime(2026, 11, 27, 4, 0), {}), date(2026, 11, 27))
+
+    def test_schedule_run_day_has_only_one_heading_across_midnight(self):
+        selected = date(2026, 11, 29)
+        rows = (
+            {"label": "MAA1", "datetime": datetime(2026, 11, 29, 22, 0), "show_date_header": True},
+            {"label": "MAA2", "datetime": datetime(2026, 11, 30, 0, 0), "show_date_header": True},
+        )
+        marked = mark_schedule_run_day(rows, selected)
+        self.assertTrue(marked[0]["show_date_header"])
+        self.assertEqual(marked[0]["header_day"], selected)
+        self.assertFalse(marked[1]["show_date_header"])
+        self.assertNotIn("header_day", marked[1])
 
     def test_schedule_page_switches_exactly_one_day(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -970,6 +1001,8 @@ class GuiV2Tests(unittest.TestCase):
             self.assertFalse(any(label.text().startswith(("正在读取", "已加载")) for label in schedule.findChildren(QLabel)))
             window.show()
             process_events(80)
+            schedule_title = next(label for label in schedule.findChildren(QLabel) if label.objectName() == "PageTitle")
+            self.assertAlmostEqual(schedule_title.geometry().bottom(), schedule.day_start_apply.geometry().bottom(), delta=2)
             self.assertGreater(
                 window.navigation.collapse_button.geometry().top(),
                 window.navigation.product.geometry().bottom(),
@@ -980,6 +1013,9 @@ class GuiV2Tests(unittest.TestCase):
             self.assertEqual(window.navigation.width(), 192)
             window.show_page("resources")
             resources = window._pages["resources"]
+            resource_title = next(label for label in resources.findChildren(QLabel) if label.objectName() == "PageTitle")
+            resource_history = next(button for button in resources.findChildren(QPushButton) if button.text() == "历史趋势")
+            self.assertAlmostEqual(resource_title.geometry().bottom(), resource_history.geometry().bottom(), delta=2)
             self.assertEqual(schedule.list_view.horizontalScrollBarPolicy(), Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             self.assertEqual(resources.anomalies.horizontalScrollBarPolicy(), Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             self.assertEqual(resources.history_splitter.count(), 2)
@@ -1003,6 +1039,11 @@ class GuiV2Tests(unittest.TestCase):
             self.assertEqual(dashboard.log_mode.objectName(), "MenuButton")
             self.assertGreaterEqual(len(dashboard.findChildren(QLabel, "StatusPill")), 2)
             window.show_page("news")
+            process_events(50)
+            news_page = window._pages["news"]
+            news_title = next(label for label in news_page.findChildren(QLabel) if label.objectName() == "PageTitle")
+            news_refresh = next(button for button in news_page.findChildren(QPushButton) if button.text() == "检查新公告")
+            self.assertAlmostEqual(news_title.geometry().bottom(), news_refresh.geometry().bottom(), delta=2)
             self.assertTrue(window.status_bar.isHidden())
             window.show_page("logs")
             self.assertIsInstance(window._pages["dashboard"], DashboardPage)

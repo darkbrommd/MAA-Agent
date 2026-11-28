@@ -59,11 +59,11 @@ TIMING_FIELDS = (
 LOCAL_PREVIEWS = {
     "MAA1 未运行": "发生了什么：没有找到 MAA1。\n你要做什么：确认程序是否已经打开。",
     "MAA2 未运行": "发生了什么：没有找到 MAA2。\n你要做什么：确认第二个 MAA 是否已经打开。",
-    "Bark 通知": "这是一条手机通知链路测试。收到它说明 Bark 和手机通知可以正常使用。",
+    "Bark 通知": "如果你收到了这条消息，说明 Bark 和手机通知可以正常使用。",
     "内存不足": "发生了什么：系统内存持续吃紧，当前 96%，可用 1.2 GB。\n你要做什么：如果不是主动运行重负载程序，请检查异常占用。",
     "磁盘空间不足": "发生了什么：磁盘剩余空间已经很少。\n你要做什么：清理不再需要的文件。",
     "网络检查失败": "发生了什么：连续多次无法完成网络检查。\n你要做什么：确认当前网络是否正常。",
-    "任务未按时开始": "发生了什么：MAA1 16:00 的计划仍没有观察到实际启动。\n你要做什么：检查 MAA、MuMu 和定时任务状态。",
+    "任务未按时开始": "发生了什么：MAA1 16:00 的计划到了时间仍没有开始。\n你要做什么：检查 MAA、MuMu 和定时任务状态。",
     "窗口未响应": "发生了什么：MAA/MuMu 窗口持续未响应。\n你要做什么：远程确认对应程序是否卡住。",
     "Agent 出错": "发生了什么：MAA Agent 没有正常完成本轮检查。\n你要做什么：打开日志中心查看最近记录。",
     "官网维护": "这是通知样例：检测到新的停机维护公告。",
@@ -227,6 +227,7 @@ class SettingsPage(QWidget):
         self.preview_buttons: dict[str, QPushButton] = {}
         self._selected_preview = ""
         self._pending_diagnostic_id = ""
+        self._pending_diagnostic_description = ""
         self._diagnostic_timer = QTimer(self)
         self._diagnostic_timer.setInterval(1000)
         self._diagnostic_timer.timeout.connect(self._poll_diagnostic_result)
@@ -558,7 +559,7 @@ class SettingsPage(QWidget):
         return page
 
     def _build_diagnostics(self) -> QWidget:
-        page, layout = self._section("通知测试", "先看看通知样例；需要确认手机能否收到时，再发送一条测试通知。")
+        page, layout = self._section("通知测试", "先选择一个通知样例，确认内容是否合适。")
         preview, preview_layout = self._card("查看通知样例")
         buttons = QGridLayout()
         buttons.setSpacing(8)
@@ -578,14 +579,14 @@ class SettingsPage(QWidget):
         self.preview_text.setPlaceholderText("选择一个提醒样例查看排版。")
         preview_layout.addWidget(self.preview_text)
         layout.addWidget(preview)
-        real, real_layout = self._card("发送测试")
-        warning = QLabel("可以发送以上 Bark 测试通知到手机进行测试。")
+        real, real_layout = self._card("功能测试")
+        warning = QLabel("测试以上功能是否正常运行并发送通知。")
         warning.setWordWrap(True)
         real_layout.addWidget(warning)
-        real_button = QPushButton("发送以上测试通知")
+        real_button = QPushButton("测试以上功能")
         real_button.clicked.connect(self._enqueue_real_test)
         real_layout.addWidget(real_button, 0, Qt.AlignmentFlag.AlignLeft)
-        self.diagnostic_status = QLabel("测试结果：还没有发送。")
+        self.diagnostic_status = QLabel("还没有进行测试。")
         self.diagnostic_status.setObjectName("MutedLabel")
         real_layout.addWidget(self.diagnostic_status)
         layout.addWidget(real)
@@ -824,25 +825,26 @@ class SettingsPage(QWidget):
 
     def _show_preview(self, name: str) -> None:
         self._selected_preview = name
-        self.preview_text.setPlainText(f"【本地预览】{name}\n\n{LOCAL_PREVIEWS[name]}")
+        self.preview_text.setPlainText(f"【通知样例】{name}\n\n{LOCAL_PREVIEWS[name]}")
 
     def _enqueue_real_test(self) -> None:
         selected = self._selected_preview
         description = selected or "Bark 通知"
         answer = QMessageBox.question(
             self,
-            "发送测试通知？",
-            f"现在向手机发送“{description}”测试通知？",
+            "测试以上功能？",
+            f"将测试“{description}”，并向手机发送通知。继续吗？",
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
         try:
             kind, target = DIAGNOSTIC_CASES.get(selected, ("bark_transport", ""))
             self._pending_diagnostic_id = diagnostic_commands.enqueue(self.base_dir, kind, target)
-        except OSError as exc:
-            self.diagnostic_status.setText(f"无法提交测试：{exc}")
+            self._pending_diagnostic_description = description
+        except OSError:
+            self.diagnostic_status.setText("没有开始测试，请稍后重试。")
             return
-        self.diagnostic_status.setText(f"已提交“{description}”测试，请留意手机通知。")
+        self.diagnostic_status.setText(f"正在测试“{description}”…")
         self._diagnostic_timer.start()
 
     def _poll_diagnostic_result(self) -> None:
@@ -855,8 +857,12 @@ class SettingsPage(QWidget):
             return
         self._diagnostic_timer.stop()
         self._pending_diagnostic_id = ""
-        prefix = "测试通过" if result.get("ok") else "测试没有完成"
-        self.diagnostic_status.setText(f"{prefix}：{result.get('message') or '没有返回说明。'}")
+        description = self._pending_diagnostic_description or "Bark 通知"
+        self._pending_diagnostic_description = ""
+        if result.get("ok"):
+            self.diagnostic_status.setText(f"“{description}”已测试，请检查手机是否收到通知。")
+        else:
+            self.diagnostic_status.setText(f"“{description}”没有完成，请检查通知设置后重试。")
 
     def set_theme(self, theme: str) -> None:
         self.theme = theme

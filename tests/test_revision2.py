@@ -953,6 +953,22 @@ class AgentLogicTests(unittest.TestCase):
         for forbidden in ("TaskChainStart","TaskChainError","UUID：","PID：","超过宽限时间","判断依据："):
             self.assertNotIn(forbidden,combined)
 
+    def test_gui_notification_test_copy_is_user_facing(self):
+        sent=[]
+        command={"id":"one","kind":"memory","target":""}
+        with patch.object(agent,"consume_diagnostic_commands",return_value=[command]), \
+             patch.object(agent,"bark_force",side_effect=lambda title,body,level="active": sent.append((title,body,level))), \
+             patch.object(agent,"add_daily_event"), \
+             patch.object(agent,"save_diagnostic_result") as save_result:
+            agent.execute_diagnostic_commands()
+        self.assertEqual(len(sent),1)
+        title,body,_level=sent[0]
+        self.assertEqual(title,"【测试】内存不足")
+        self.assertIn("发生了什么",body)
+        for forbidden in ("演习","模拟信号","真实运行时","链路","探针","PID","证据来源"):
+            self.assertNotIn(forbidden,title+body)
+        self.assertEqual(save_result.call_args.args[3],"测试通知已发送。")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
