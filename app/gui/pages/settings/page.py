@@ -8,7 +8,7 @@ from pathlib import Path
 from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
-    QComboBox,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 
 import diagnostic_commands
 from gui.components.toggle_switch import ToggleSwitch
+from gui.components.time_picker import NoWheelComboBox, TimePicker
 from gui.services.config_service import ConfigService
 
 
@@ -118,14 +119,6 @@ BOOLEAN_DEFAULTS = {
 }
 
 
-class _NoWheelComboBox(QComboBox):
-    def wheelEvent(self, event) -> None:
-        if not self.hasFocus():
-            event.ignore()
-            return
-        super().wheelEvent(event)
-
-
 class _NoWheelSpinBox(QSpinBox):
     def wheelEvent(self, event) -> None:
         if not self.hasFocus():
@@ -134,36 +127,79 @@ class _NoWheelSpinBox(QSpinBox):
         super().wheelEvent(event)
 
 
-class _TimePicker(QWidget):
+class _NoWheelDoubleSpinBox(QDoubleSpinBox):
+    def wheelEvent(self, event) -> None:
+        if not self.hasFocus():
+            event.ignore()
+            return
+        super().wheelEvent(event)
+
+
+class _MemoryAmountPicker(QWidget):
     changed = Signal()
 
-    def __init__(self, value: str = "00:00", parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
+        self._updating = False
+        self._unit = "MB"
+        self._megabytes = 1
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
-        self.hour = _NoWheelComboBox()
-        self.hour.addItems([f"{value:02d}" for value in range(25)])
-        self.minute = _NoWheelComboBox()
-        self.minute.addItems([f"{value:02d}" for value in range(60)])
-        layout.addWidget(self.hour)
-        layout.addWidget(QLabel("时"))
-        layout.addWidget(self.minute)
-        layout.addWidget(QLabel("分"))
+        self.value = _NoWheelDoubleSpinBox()
+        self.unit = NoWheelComboBox()
+        self.unit.addItems(("MB", "GB"))
+        layout.addWidget(self.value)
+        layout.addWidget(self.unit)
         layout.addStretch(1)
-        self.hour.currentIndexChanged.connect(lambda _index: self.changed.emit())
-        self.minute.currentIndexChanged.connect(lambda _index: self.changed.emit())
-        self.set_time(value)
+        self.value.valueChanged.connect(self._value_changed)
+        self.unit.currentTextChanged.connect(self._change_unit)
+        self._configure("MB")
 
-    def set_time(self, value: str) -> None:
-        match = re.fullmatch(r"(\d{1,2}):(\d{2})", str(value or ""))
-        hour, minute = (int(match.group(1)), int(match.group(2))) if match else (0, 0)
-        self.hour.setCurrentIndex(max(0, min(24, hour)))
-        self.minute.setCurrentIndex(max(0, min(59, minute)))
+    def _configure(self, unit: str) -> None:
+        if unit == "GB":
+            self.value.setDecimals(1)
+            self.value.setRange(0.1, 1024.0)
+            self.value.setSingleStep(0.5)
+        else:
+            self.value.setDecimals(0)
+            self.value.setRange(1, 1024 * 1024)
+            self.value.setSingleStep(128)
 
-    def time(self) -> str:
-        hour = 0 if self.hour.currentIndex() == 24 else self.hour.currentIndex()
-        return f"{hour:02d}:{self.minute.currentIndex():02d}"
+    def _value_changed(self, value: float) -> None:
+        if self._updating:
+            return
+        self._megabytes = max(1, int(round(value * (1024 if self._unit == "GB" else 1))))
+        self.changed.emit()
+
+    def _change_unit(self, unit: str) -> None:
+        if self._updating or unit == self._unit:
+            return
+        megabytes = self._megabytes
+        self._updating = True
+        try:
+            self._unit = unit
+            self._configure(unit)
+            self.value.setValue(megabytes / 1024 if unit == "GB" else megabytes)
+        finally:
+            self._updating = False
+        self.changed.emit()
+
+    def set_megabytes(self, value: int | float) -> None:
+        megabytes = max(1, int(round(float(value or 0))))
+        unit = "GB" if megabytes >= 1024 else "MB"
+        self._updating = True
+        try:
+            self._megabytes = megabytes
+            self._unit = unit
+            self.unit.setCurrentText(unit)
+            self._configure(unit)
+            self.value.setValue(megabytes / 1024 if unit == "GB" else megabytes)
+        finally:
+            self._updating = False
+
+    def megabytes(self) -> int:
+        return self._megabytes
 
 
 class SettingsPage(QWidget):
@@ -185,8 +221,8 @@ class SettingsPage(QWidget):
         self._dirty = False
         self._line_edits: dict[str, QLineEdit] = {}
         self._spin_boxes: dict[str, QSpinBox] = {}
-        self._time_pickers: dict[str, _TimePicker] = {}
-        self._news_time_rows: list[tuple[QWidget, _TimePicker]] = []
+        self._time_pickers: dict[str, TimePicker] = {}
+        self._news_time_rows: list[tuple[QWidget, TimePicker]] = []
         self._toggles: dict[str, list[ToggleSwitch]] = {}
         self.preview_buttons: dict[str, QPushButton] = {}
         self._selected_preview = ""
@@ -310,8 +346,8 @@ class SettingsPage(QWidget):
         self._spin_boxes[key] = spin
         return spin
 
-    def _add_time(self, form: QFormLayout, label: str, key: str, default: str) -> _TimePicker:
-        picker = _TimePicker(default)
+    def _add_time(self, form: QFormLayout, label: str, key: str, default: str) -> TimePicker:
+        picker = TimePicker(default)
         picker.changed.connect(self._mark_dirty)
         form.addRow(label, picker)
         self._time_pickers[key] = picker
@@ -341,7 +377,7 @@ class SettingsPage(QWidget):
         row = QWidget()
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
-        picker = _TimePicker(value)
+        picker = TimePicker(value)
         picker.changed.connect(self._mark_dirty)
         remove = QPushButton("删除")
         remove.clicked.connect(lambda _checked=False, host=row: self._remove_news_time(host))
@@ -397,7 +433,7 @@ class SettingsPage(QWidget):
         instances, instances_layout = self._card("要管理的 MAA")
         count_row = QHBoxLayout()
         count_row.addWidget(QLabel("MAA 数量"))
-        self.instance_count = _NoWheelComboBox()
+        self.instance_count = NoWheelComboBox()
         self.instance_count.addItems(("一个（推荐）", "两个"))
         self.instance_count.currentIndexChanged.connect(self._instance_count_changed)
         count_row.addWidget(self.instance_count)
@@ -451,11 +487,13 @@ class SettingsPage(QWidget):
             ("持续多久后提醒（分钟）", "memory_pressure_sustain_minutes"),
             ("严重占用达到（%）", "memory_critical_percent"),
             ("严重状态持续（分钟）", "memory_critical_sustain_minutes"),
-            ("可用内存低于（MB）", "memory_critical_available_mb"),
-            ("情况没变化时每隔多久记录（分钟）", "resource_sample_abnormal_steady_minutes"),
         ):
             maximum = 100 if key.endswith("_percent") else 99999
             self._add_spin(form, label, key, maximum)
+        self.memory_available = _MemoryAmountPicker()
+        self.memory_available.changed.connect(self._mark_dirty)
+        form.addRow("可用内存低于", self.memory_available)
+        self._add_spin(form, "情况没变化时每隔多久记录（分钟）", "resource_sample_abnormal_steady_minutes")
         memory_layout.addLayout(form)
         layout.addWidget(memory)
         proxy, proxy_layout = self._card("网络与公告")
@@ -508,7 +546,6 @@ class SettingsPage(QWidget):
         self._add_toggle(proxy_layout, "启用每日报告", "enable_daily_report")
         form = QFormLayout()
         self._add_time(form, "日报时间", "daily_report_time", "23:50")
-        self._add_time(form, "日程每天从", "schedule_day_start_time", "04:00")
         proxy_layout.addLayout(form)
         layout.addWidget(proxy)
         timing, timing_layout = self._card("检查频率")
@@ -622,6 +659,7 @@ class SettingsPage(QWidget):
             for key, spin in self._spin_boxes.items():
                 value = data.get(key, FIELD_DEFAULTS.get(key, 0))
                 spin.setValue(int(float(value or 0)))
+            self.memory_available.set_megabytes(data.get("memory_critical_available_mb", FIELD_DEFAULTS["memory_critical_available_mb"]))
             for key, picker in self._time_pickers.items():
                 picker.set_time(str(data.get(key, FIELD_DEFAULTS.get(key, "00:00"))))
             self._set_news_times(data.get("news_check_times") or FIELD_DEFAULTS["news_check_times"])
@@ -667,8 +705,10 @@ class SettingsPage(QWidget):
                 data[key] = text
         for key, spin in self._spin_boxes.items():
             data[key] = int(spin.value())
+        data["memory_critical_available_mb"] = self.memory_available.megabytes()
         for key, picker in self._time_pickers.items():
             data[key] = picker.time()
+        data.setdefault("schedule_day_start_time", FIELD_DEFAULTS["schedule_day_start_time"])
         data["news_check_times"] = [picker.time() for _row, picker in self._news_time_rows]
         for key, toggles in self._toggles.items():
             if key.startswith("autostart:"):

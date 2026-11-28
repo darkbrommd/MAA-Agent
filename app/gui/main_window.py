@@ -134,7 +134,9 @@ class MainWindow(QMainWindow):
             self.refresh_manager.register("schedule", 5000, page.refresh_tick)
             return page
         if key == "resources":
-            return ResourcesPage(self.base_dir, self.app_state.page_state(key), self._theme)
+            page = ResourcesPage(self.base_dir, self.app_state.page_state(key), self._theme)
+            self.refresh_manager.register("resources", 1000, page.refresh_uptime)
+            return page
         if key == "news":
             return NewsPage(self.base_dir, self.app_state.page_state(key), self._theme)
         if key == "logs":
@@ -237,10 +239,11 @@ class MainWindow(QMainWindow):
         self.app_state.flush()
         self.process_service.wait()
         for page in self._pages.values():
-            service = getattr(page, "service", None)
-            wait = getattr(service, "wait", None)
-            if callable(wait):
-                wait()
+            for name in ("service", "day_start_service"):
+                service = getattr(page, name, None)
+                wait = getattr(service, "wait", None)
+                if callable(wait):
+                    wait()
         super().closeEvent(event)
 
     def _set_refresh_visibility(self, visible: bool) -> None:

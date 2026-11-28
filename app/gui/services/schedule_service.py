@@ -202,6 +202,7 @@ class _ScheduleWorker(QRunnable):
             metadata = dict(meta)
             if selected_day is not None:
                 metadata["selected_day"] = selected_day.isoformat()
+            metadata["schedule_day_start_time"] = f"{start.hour:02d}:{start.minute:02d}"
             self.signals.done.emit(self.request_id, ScheduleSnapshot(start, end, decorated, metadata))
         except Exception as exc:
             self.signals.failed.emit(self.request_id, str(exc))

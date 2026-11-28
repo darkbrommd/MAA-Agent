@@ -18,8 +18,10 @@ from PySide6.QtWidgets import (
 
 from gui.components.date_picker import DatePicker
 from gui.components.dialogs import show_schedule_error
+from gui.components.time_picker import TimePicker
 from gui.components.timeline_delegate import TimelineDelegate
 from gui.models.schedule_model import ScheduleModel, schedule_row_key
+from gui.services.config_service import ConfigService
 from gui.services.schedule_service import ScheduleService, ScheduleSnapshot
 from project_paths import config_path
 from schedule_utils import add_override, remove_override
@@ -94,17 +96,23 @@ class SchedulePage(QWidget):
         self._override_workers: set[_OverrideWorker] = set()
         self._pending_override_keys: set[tuple] = set()
         self._pending_toggle_items: dict[tuple, tuple[dict, bool]] = {}
+        self._pending_day_start = ""
         self._override_pool = QThreadPool(self)
         self._override_pool.setMaxThreadCount(1)
         self.service = ScheduleService(self.base_dir, parent=self)
         self.service.loaded.connect(self._on_loaded)
         self.service.failed.connect(self._on_failed)
+        self.day_start_service = ConfigService(self.base_dir, self)
+        self.day_start_service.loaded.connect(self._save_day_start_loaded)
+        self.day_start_service.saved.connect(self._day_start_saved)
+        self.day_start_service.failed.connect(self._day_start_failed)
         self.model = ScheduleModel(self)
         self.delegate = TimelineDelegate(theme, self)
         self.delegate.error_requested.connect(lambda item: show_schedule_error(self, item, self.theme))
         self.delegate.monitor_toggled.connect(self.toggle_occurrence)
         self.delegate.move_requested.connect(self.move_occurrence)
         self.delegate.clear_requested.connect(self.clear_occurrence)
+        self.delegate.day_requested.connect(self._change_day_from_list)
         self._build_ui()
         self.delegate.repaint_requested.connect(self.list_view.viewport().update)
         initial_anchor = (
@@ -118,9 +126,20 @@ class SchedulePage(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(22, 20, 22, 20)
         root.setSpacing(12)
+        title_row = QHBoxLayout()
         title = QLabel("日程管理")
         title.setObjectName("PageTitle")
-        root.addWidget(title)
+        title_row.addWidget(title)
+        title_row.addStretch(1)
+        title_row.addWidget(QLabel("日程每天从"))
+        self.day_start_picker = TimePicker("04:00", add_stretch=False)
+        title_row.addWidget(self.day_start_picker)
+        title_row.addWidget(QLabel("开始"))
+        self.day_start_apply = QPushButton("应用")
+        self.day_start_apply.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.day_start_apply.clicked.connect(self._save_day_start)
+        title_row.addWidget(self.day_start_apply)
+        root.addLayout(title_row)
         toolbar = QHBoxLayout()
         previous = QPushButton("‹")
         next_button = QPushButton("›")
@@ -179,6 +198,30 @@ class SchedulePage(QWidget):
         self._anchor_datetime = datetime.now()
         self.refresh("reset", self._anchor_datetime, current=True)
 
+    def _change_day_from_list(self, direction: int) -> None:
+        if direction:
+            self.set_day(self.selected_day + timedelta(days=direction))
+
+    @staticmethod
+    def _day_navigation_rows(selected_day: date, rows) -> tuple[dict, ...]:
+        previous = selected_day - timedelta(days=1)
+        following = selected_day + timedelta(days=1)
+        return (
+            {
+                "kind": "day_navigation",
+                "direction": -1,
+                "target_day": previous,
+                "text": f"‹  切换到上一天 · {previous.month}月{previous.day}日",
+            },
+            *(dict(row) for row in rows),
+            {
+                "kind": "day_navigation",
+                "direction": 1,
+                "target_day": following,
+                "text": f"切换到下一天 · {following.month}月{following.day}日  ›",
+            },
+        )
+
     def refresh(
         self,
         mode: str = "preserve",
@@ -211,20 +254,22 @@ class SchedulePage(QWidget):
             self.selected_day = date.fromisoformat(str(loaded_day))
             self.page_state["selected_day"] = self.selected_day.isoformat()
             self.date_picker.set_date(self.selected_day, emit=False)
+        start_time = str(snapshot.meta.get("schedule_day_start_time") or "04:00")
+        if not self._pending_day_start:
+            self.day_start_picker.set_time(start_time)
+        display_rows = self._day_navigation_rows(self.selected_day, snapshot.rows)
         update_kind = "reset"
         if mode == "reset":
-            self.model.set_rows(snapshot.rows)
+            self.model.set_rows(display_rows)
         else:
-            update_kind = self.model.sync_rows(snapshot.rows)
+            update_kind = self.model.sync_rows(display_rows)
         self.delegate.sync_toggle_states(self.model.rows())
         if mode == "reset":
-            target = context.get("anchor_datetime") or datetime.now()
             self._anchor_datetime = None
             rows = self.model.rows()
-            if rows:
-                index = min(range(len(rows)), key=lambda row: abs((rows[row]["datetime"] - target).total_seconds()))
-                model_index = self.model.index(index, 0)
-                self.list_view.scrollTo(model_index, QListView.ScrollHint.PositionAtCenter)
+            if len(rows) >= 2:
+                model_index = self.model.index(1, 0)
+                self.list_view.scrollTo(model_index, QListView.ScrollHint.PositionAtTop)
                 self.list_view.setCurrentIndex(model_index)
         else:
             key = context.get("preserve_key")
@@ -295,6 +340,32 @@ class SchedulePage(QWidget):
         status_bar = getattr(window, "statusBar", None)
         if callable(status_bar):
             status_bar().showMessage(message, 6000)
+
+    def _save_day_start(self) -> None:
+        self._pending_day_start = self.day_start_picker.time()
+        self.day_start_apply.setEnabled(False)
+        self.day_start_apply.setText("保存中…")
+        self.day_start_service.load()
+
+    def _save_day_start_loaded(self, data: dict) -> None:
+        if not self._pending_day_start:
+            return
+        updated = dict(data)
+        updated["schedule_day_start_time"] = self._pending_day_start
+        self.day_start_service.save(updated)
+
+    def _day_start_saved(self, _path: Path) -> None:
+        self._pending_day_start = ""
+        self.day_start_apply.setEnabled(True)
+        self.day_start_apply.setText("应用")
+        self._show_transient_message("日程开始时间已保存。")
+        self.refresh("reset")
+
+    def _day_start_failed(self, message: str) -> None:
+        self._pending_day_start = ""
+        self.day_start_apply.setEnabled(True)
+        self.day_start_apply.setText("应用")
+        QMessageBox.warning(self, "没有保存成功", message)
 
     def toggle_occurrence(self, item: dict, enabled: bool) -> None:
         action = "clear" if enabled else "skip"

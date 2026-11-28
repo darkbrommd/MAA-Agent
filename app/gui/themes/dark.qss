@@ -42,7 +42,8 @@ QLabel#StatusPill[status="running"] {{ background: {next_card}; color: {success}
 QLabel#StatusPill[status="warning"] {{ background: {running_card}; color: {warning}; border-color: {warning}; }}
 QLabel#StatusPill[status="stopped"] {{ background: {ended_card}; color: {ended}; border-color: {border}; }}
 QLabel#StatusPill[status="error"] {{ background: {failure_card}; color: {danger}; border-color: {danger}; }}
-QLineEdit, QComboBox, QSpinBox, QDateEdit {{ background: {card}; border: 1px solid {border}; border-radius: 7px; padding: 6px 8px; }}
+QLabel#UptimePill {{ background: {card}; color: {muted}; border: 1px solid {border}; border-radius: 10px; padding: 6px 10px; font-family: "Segoe UI", "Microsoft YaHei UI"; }}
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QDateEdit {{ background: {card}; border: 1px solid {border}; border-radius: 7px; padding: 6px 8px; }}
 QComboBox {{ padding-right: 30px; }}
 QComboBox::drop-down {{ border: 0; width: 26px; }}
 QComboBox::down-arrow {{ image: url("{combo_arrow}"); width: 12px; height: 12px; }}

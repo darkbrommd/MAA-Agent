@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -194,8 +195,10 @@ class ResourcesPage(QWidget):
         navigation.addWidget(next_button)
         navigation.addWidget(today)
         navigation.addStretch(1)
-        self.day_label = QLabel()
-        navigation.addWidget(self.day_label)
+        self.uptime_label = QLabel()
+        self.uptime_label.setObjectName("UptimePill")
+        self.uptime_label.setToolTip("从 Windows 本次启动开始计算")
+        navigation.addWidget(self.uptime_label)
         history_layout.addLayout(navigation)
         self.summary = QLabel("正在载入记录…")
         self.summary.setObjectName("MutedLabel")
@@ -268,7 +271,7 @@ class ResourcesPage(QWidget):
         segment = segment if segment in (0, 1) else 0
         self.stack.setCurrentIndex(segment)
         (history_button if segment == 0 else whitelist_button).setChecked(True)
-        self._update_day_label()
+        self.refresh_uptime()
 
     def _save_splitter_sizes(self) -> None:
         sizes = self.history_splitter.sizes()
@@ -290,7 +293,6 @@ class ResourcesPage(QWidget):
         self.selected_day = selected
         self.page_state["selected_day"] = selected.isoformat()
         self.date_picker.set_date(selected, emit=False)
-        self._update_day_label()
         self.summary.setText("正在载入记录…")
         self.service.request_day(selected, self.start_hour)
         self._request_month_markers(selected.year, selected.month)
@@ -301,9 +303,13 @@ class ResourcesPage(QWidget):
     def _show_month_markers(self, markers: dict[date, str]) -> None:
         self.date_picker.set_markers(markers)
 
-    def _update_day_label(self) -> None:
-        end = self.selected_day + timedelta(days=1)
-        self.day_label.setText(f"{self.selected_day:%Y-%m-%d 00:00} → {end:%m-%d 00:00}")
+    def refresh_uptime(self) -> None:
+        total = max(0, int(time.monotonic()))
+        days, remainder = divmod(total, 86400)
+        hours, remainder = divmod(remainder, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        day_text = f"{days}天 " if days else ""
+        self.uptime_label.setText(f"系统已运行 · {day_text}{hours:02d}:{minutes:02d}:{seconds:02d}")
 
     def _on_loaded(self, request_id: int, snapshot: ResourceSnapshot) -> None:
         if snapshot.day != self.selected_day:

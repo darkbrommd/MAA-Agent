@@ -4,6 +4,8 @@ from PySide6.QtCore import QAbstractListModel, QModelIndex, Qt
 
 
 def schedule_row_key(item: dict) -> tuple[str, object, object, str]:
+    if item.get("kind") == "day_navigation":
+        return ("day_navigation", item.get("target_day"), item.get("direction"), "")
     return (
         str(item.get("label") or ""),
         item.get("original_datetime") or item.get("datetime"),
@@ -29,6 +31,8 @@ class ScheduleModel(QAbstractListModel):
         if role == self.ItemRole:
             return item
         if role == Qt.ItemDataRole.DisplayRole:
+            if item.get("kind") == "day_navigation":
+                return str(item.get("text") or "切换运行日")
             return f"{item['datetime']:%H:%M}  {item['label']}"
         if role == Qt.ItemDataRole.ToolTipRole:
             return item.get("status_detail", "")

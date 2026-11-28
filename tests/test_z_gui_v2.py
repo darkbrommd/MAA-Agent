@@ -21,7 +21,7 @@ APP_DIR = ROOT / "app"
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
-from PySide6.QtCore import QCoreApplication, QEventLoop, QObject, QPoint, QPointF, QRect, QThreadPool, Qt, Signal
+from PySide6.QtCore import QCoreApplication, QEventLoop, QObject, QPoint, QPointF, QRect, QRectF, QThreadPool, Qt, Signal
 from PySide6.QtGui import QImage, QPainter, QWheelEvent
 from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton
 
@@ -29,7 +29,7 @@ from gui.components.resource_chart import ResourceChart
 from gui.components.date_picker import DatePicker
 from gui.components.dialogs import ResourceDetailDialog, ScheduleErrorDialog
 from gui.components.responsive_layout import responsive_card_rect
-from gui.components.timeline_delegate import TimelineDelegate, compute_card_layout
+from gui.components.timeline_delegate import TimelineDelegate, compute_card_layout, compute_day_navigation_layout
 from gui.components.toggle_switch import ToggleSwitch
 from gui.main_window import MainWindow
 from gui.first_run_wizard import FirstRunWizard, needs_first_run
@@ -247,7 +247,13 @@ class GuiV2Tests(unittest.TestCase):
             self.assertEqual(page._line_edits["bark_key"].echoMode(), QLineEdit.EchoMode.Password)
             self.assertEqual(page._spin_boxes["startup_process_grace_minutes"].value(), 10)
             self.assertEqual(page._time_pickers["daily_report_time"].time(), "23:50")
-            self.assertEqual(page._time_pickers["schedule_day_start_time"].time(), "04:00")
+            self.assertNotIn("schedule_day_start_time", page._time_pickers)
+            self.assertEqual(page.memory_available.unit.currentText(), "GB")
+            self.assertEqual(page.memory_available.megabytes(), 1536)
+            page.memory_available.unit.setCurrentText("MB")
+            self.assertEqual(page.memory_available.value.value(), 1536)
+            page.memory_available.unit.setCurrentText("GB")
+            self.assertEqual(page.memory_available.megabytes(), 1536)
             self.assertEqual([picker.time() for _row, picker in page._news_time_rows], ["00:05", "12:05"])
             self.assertEqual(
                 next(label.text() for label in page.findChildren(QLabel) if "右下角保存" in label.text()),
@@ -260,14 +266,13 @@ class GuiV2Tests(unittest.TestCase):
             )
             for forbidden in ("config.json", "全部配置", "代理健康检查", "监督预期", "下一轮读取", "MAA 实例"):
                 self.assertNotIn(forbidden, visible_copy)
-            page._time_pickers["schedule_day_start_time"].hour.setCurrentIndex(24)
-            page._time_pickers["schedule_day_start_time"].minute.setCurrentIndex(15)
             first_news_row = page._news_time_rows[0][0]
             page._remove_news_time(first_news_row)
             page._add_news_time("06:30")
             collected = page._collect()
             self.assertEqual(collected["launch_paths"]["MAA1"], "D:/custom/MAA.exe")
-            self.assertEqual(collected["schedule_day_start_time"], "00:15")
+            self.assertEqual(collected["schedule_day_start_time"], "04:00")
+            self.assertEqual(collected["memory_critical_available_mb"], 1536)
             self.assertEqual(collected["news_check_times"], ["12:05", "06:30"])
             self.assertIsInstance(collected["startup_process_grace_minutes"], int)
             self.assertEqual(collected["maa_gui_config_paths"]["MAA1"], "D:/custom/gui.json")
@@ -371,6 +376,12 @@ class GuiV2Tests(unittest.TestCase):
             self.assertTrue(scaled.card.contains(scaled.clear_button.center()))
             self.assertGreater(scaled.title.width(), 0)
 
+    def test_day_navigation_strip_uses_one_shared_layout(self):
+        rect = QRect(0, 0, 1200, 56)
+        strip = compute_day_navigation_layout(rect)
+        self.assertEqual(strip, QRectF(8, 6, 1184, 44))
+        self.assertTrue(strip.contains(strip.center()))
+
     def test_timeline_cards_align_and_stop_growing_on_ultrawide_views(self):
         normal = compute_card_layout(QRect(0, 0, 1200, 122), {"state": "future"})
         wide = compute_card_layout(QRect(0, 0, 2500, 122), {"state": "future"})
@@ -452,15 +463,46 @@ class GuiV2Tests(unittest.TestCase):
             page = SchedulePage(base_dir, {})
             QThreadPool.globalInstance().waitForDone(3000)
             process_events(80)
+            self.assertEqual(page.model.item(0)["direction"], -1)
+            self.assertEqual(page.model.item(page.model.rowCount() - 1)["direction"], 1)
+            self.assertEqual(page.list_view.currentIndex().row(), 1)
             original = page.selected_day
             selected = original + timedelta(days=1)
-            page.set_day(selected)
+            page._change_day_from_list(1)
             context = page._request_contexts[page._active_request_id]
             self.assertEqual(context["mode"], "reset")
             self.assertEqual(context["selected_day"], selected)
             self.assertEqual(page.selected_day - original, timedelta(days=1))
             QThreadPool.globalInstance().waitForDone(3000)
             process_events(80)
+            page.close()
+
+    def test_schedule_page_saves_day_start_without_opening_settings(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base_dir = Path(temporary)
+            (base_dir / "config").mkdir(parents=True)
+            (base_dir / "state").mkdir()
+            path = base_dir / "config" / "config.json"
+            path.write_text(
+                json.dumps({"maa_schedule": {}, "maa_instance_dirs": {}, "schedule_day_start_time": "04:00"}),
+                encoding="utf-8",
+            )
+            page = SchedulePage(base_dir, {})
+            QThreadPool.globalInstance().waitForDone(3000)
+            process_events(100)
+            self.assertEqual(page.day_start_picker.time(), "04:00")
+            page.day_start_picker.hour.setCurrentIndex(24)
+            page.day_start_picker.minute.setCurrentIndex(15)
+            page._save_day_start()
+            self.assertTrue(page.day_start_service.wait(3000))
+            process_events(100)
+            self.assertTrue(page.day_start_service.wait(3000))
+            process_events(100)
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["schedule_day_start_time"], "00:15")
+            self.assertTrue(path.with_suffix(".json.bak").exists())
+            self.assertEqual(page.day_start_apply.text(), "应用")
+            QThreadPool.globalInstance().waitForDone(3000)
             page.close()
 
     def test_schedule_mouse_wheel_uses_short_fixed_step(self):
@@ -941,6 +983,10 @@ class GuiV2Tests(unittest.TestCase):
             self.assertEqual(schedule.list_view.horizontalScrollBarPolicy(), Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             self.assertEqual(resources.anomalies.horizontalScrollBarPolicy(), Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             self.assertEqual(resources.history_splitter.count(), 2)
+            with patch("gui.pages.resources.time.monotonic", return_value=90061):
+                resources.refresh_uptime()
+            self.assertEqual(resources.uptime_label.text(), "系统已运行 · 1天 01:01:01")
+            self.assertFalse(hasattr(resources, "day_label"))
             chosen = date(2026, 11, 20)
             resources.request_day(chosen)
             self.assertEqual(resources.date_picker.date(), chosen)

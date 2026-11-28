@@ -77,11 +77,16 @@ def compute_card_layout(rect: QRect | QRectF, item: dict) -> CardLayout:
     )
 
 
+def compute_day_navigation_layout(rect: QRect | QRectF) -> QRectF:
+    return QRectF(rect).adjusted(8, 6, -8, -6)
+
+
 class TimelineDelegate(QStyledItemDelegate):
     error_requested = Signal(object)
     monitor_toggled = Signal(object, bool)
     move_requested = Signal(object)
     clear_requested = Signal(object)
+    day_requested = Signal(int)
     repaint_requested = Signal()
 
     def __init__(self, theme: str = "dark", parent=None):
@@ -96,6 +101,8 @@ class TimelineDelegate(QStyledItemDelegate):
 
     def sizeHint(self, option: QStyleOptionViewItem, index) -> QSize:
         item = index.data(ScheduleModel.ItemRole) or {}
+        if item.get("kind") == "day_navigation":
+            return QSize(1, 56)
         return QSize(1, 153 if item.get("show_date_header") else 122)
 
     @staticmethod
@@ -143,7 +150,11 @@ class TimelineDelegate(QStyledItemDelegate):
 
     def sync_toggle_states(self, rows: tuple[dict, ...]) -> None:
         """Release optimistic animation state after the worker result reaches the model."""
-        actual = {schedule_row_key(item): not bool(item.get("skipped")) for item in rows}
+        actual = {
+            schedule_row_key(item): not bool(item.get("skipped"))
+            for item in rows
+            if item.get("kind") != "day_navigation"
+        }
         for key, target in tuple(self._toggle_targets.items()):
             if actual.get(key) != target:
                 continue
@@ -181,8 +192,20 @@ class TimelineDelegate(QStyledItemDelegate):
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
         item = index.data(ScheduleModel.ItemRole) or {}
-        layout = compute_card_layout(option.rect, item)
         tokens = self.tokens
+        if item.get("kind") == "day_navigation":
+            rect = compute_day_navigation_layout(option.rect)
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            painter.setPen(QPen(QColor(tokens.border), 1))
+            painter.setBrush(QColor(tokens.disabled_background))
+            painter.drawRoundedRect(rect, 8, 8)
+            painter.setPen(QColor(tokens.accent))
+            painter.setFont(QFont("Microsoft YaHei UI", 10, QFont.Weight.DemiBold))
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, str(item.get("text") or "切换运行日"))
+            painter.restore()
+            return
+        layout = compute_card_layout(option.rect, item)
         state = str(item.get("state") or "future")
         background, accent = self._state_colors(state)
         painter.save()
@@ -252,6 +275,11 @@ class TimelineDelegate(QStyledItemDelegate):
     def editorEvent(self, event, model, option, index) -> bool:
         if event.type() == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
             item = index.data(ScheduleModel.ItemRole) or {}
+            if item.get("kind") == "day_navigation":
+                if compute_day_navigation_layout(option.rect).contains(event.position()):
+                    self.day_requested.emit(int(item.get("direction") or 0))
+                    return True
+                return False
             layout = compute_card_layout(option.rect, item)
             position = event.position()
             if layout.toggle.contains(position):
